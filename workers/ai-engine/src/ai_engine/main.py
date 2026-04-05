@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 
 from .config import get_settings
-from .consumer import TopicGenerationConsumer
+from .consumer import IntegrationEventConsumer
 from .db import create_session_factory
 
 
@@ -15,7 +15,7 @@ def main() -> None:
 
     settings = get_settings()
     session_factory = create_session_factory(settings.database_url)
-    consumer = TopicGenerationConsumer(settings, session_factory)
+    consumer = IntegrationEventConsumer(settings, session_factory)
     consumer.run_forever()
 
 

@@ -8,15 +8,32 @@ worker_dir="${repo_root}/workers/ai-engine"
 venv_dir="${worker_dir}/.venv"
 
 base_url="${BASE_URL:-http://localhost:3000}"
-organization_id="${ORGANIZATION_ID:-org-demo}"
+organization_name="${ORGANIZATION_NAME:-Demo Org}"
 campaign_name="${CAMPAIGN_NAME:-Spring Launch}"
-niche="${NICHE:-remote accounting}"
 docker_compose_file="${repo_root}/infra/docker/docker-compose.yml"
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
     echo "Missing required command: $1" >&2
     exit 1
+  fi
+}
+
+stop_existing_processes() {
+  local port_pids
+  port_pids="$(lsof -ti tcp:3000 || true)"
+
+  if [ -n "${port_pids}" ]; then
+    echo "Stopping existing process(es) on port 3000: ${port_pids}"
+    kill ${port_pids} >/dev/null 2>&1 || true
+  fi
+
+  local worker_pids
+  worker_pids="$(pgrep -f 'python -m ai_engine.main' || true)"
+
+  if [ -n "${worker_pids}" ]; then
+    echo "Stopping existing ai_engine worker process(es): ${worker_pids}"
+    kill ${worker_pids} >/dev/null 2>&1 || true
   fi
 }
 
@@ -61,8 +78,12 @@ require_command python3
 require_command curl
 require_command docker
 require_command osascript
+require_command lsof
+require_command pgrep
 
 cd "${repo_root}"
+
+stop_existing_processes
 
 if [ ! -f "${repo_root}/.env" ]; then
   cp "${repo_root}/.env.example" "${repo_root}/.env"
@@ -103,35 +124,23 @@ start_in_terminal \
 
 wait_for_health
 
-campaign_response="$(curl -sS \
-  -X POST "${base_url}/campaigns" \
+organization_response="$(curl -sS \
+  -X POST "${base_url}/organizations" \
   -H "content-type: application/json" \
-  -H "x-organization-id: ${organization_id}" \
-  -d "{\"name\":\"${campaign_name}\",\"niche\":\"${niche}\"}")"
+  -d "{\"name\":\"${organization_name}\"}")"
+printf 'Organization response: %s\n' "${organization_response}"
+
+organization_id="$(printf '%s' "${organization_response}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
+printf 'Organization id: %s\n' "${organization_id}"
+
+campaign_response="$(curl -sS \
+  -X POST "${base_url}/organizations/${organization_id}/campaigns" \
+  -H "content-type: application/json" \
+  -d "{\"name\":\"${campaign_name}\"}")"
 printf 'Campaign response: %s\n' "${campaign_response}"
 
 campaign_id="$(printf '%s' "${campaign_response}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
 printf 'Campaign id: %s\n' "${campaign_id}"
 
-topic_generation_response="$(curl -sS \
-  -X POST "${base_url}/campaigns/${campaign_id}/topic-generation" \
-  -H "x-organization-id: ${organization_id}")"
-printf 'Topic generation response: %s\n' "${topic_generation_response}"
-
-echo "Waiting 3 seconds for async processing"
-sleep 3
-
-topics_response="$(curl -sS \
-  "${base_url}/campaigns/${campaign_id}/topics" \
-  -H "x-organization-id: ${organization_id}")"
-printf 'Topics response: %s\n' "${topics_response}"
-
-python3 -c '
-import json
-import sys
-
-topics = json.loads(sys.argv[1]).get("topics", [])
-if not topics:
-    raise SystemExit("Expected at least one topic, got none")
-print("Automated bootstrap smoke test passed.")
-' "${topics_response}"
+echo "Running Phase 1 smoke validation"
+bash "${repo_root}/scripts/smoke-topic-flow.sh"

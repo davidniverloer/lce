@@ -1,41 +1,57 @@
-# LCE agent instructions
+# LCE Agent Instructions
 
 ## Mission
-Bootstrap the Lonnser Content Engine from scratch on macOS using VS Code and Codex.
+Build the Lonnser Content Engine incrementally, phase by phase, following the roadmap and architecture documents.
 
 ## Source of truth
-Read these first:
+Always read these first:
 - docs/00-project-overview.md
-- docs/01-architecture-rules.md
-- docs/02-day-1-bootstrap.md
-- docs/03-bounded-contexts.md
-- docs/04-event-contracts.md
-- docs/05-data-persistence-rules.md
+- docs/01-global-architecture-rules.md
+- docs/10-phase-1-foundation-persistence.md
+- docs/11-phase-1-acceptance-criteria.md
+- docs/12-phase-1-deliverables.md
+- docs/13-phase-1-event-and-data-rules.md
 
-## Hard constraints
+## Permanent architecture rules
 - Use a pnpm monorepo.
 - apps/orchestrator is Node.js + TypeScript.
 - workers/ai-engine is Python 3.11+.
-- Infra must include PostgreSQL, RabbitMQ, Redis.
-- Never write directly to RabbitMQ from REST controllers.
-- Use transactional outbox for producers.
+- Infrastructure includes PostgreSQL, RabbitMQ, and Redis.
+- REST controllers must never publish directly to RabbitMQ.
+- Produced events must use the Transactional Outbox Pattern.
 - Consumers must be idempotent using processed_event_log.
-- No cross-bounded-context DB writes.
-- Every aggregate root must include organizationId.
-- Prefer the thinnest vertical slice first.
-
-## Day 1 target
-Deliver:
-- infra/docker/docker-compose.yml
-- root workspace files
-- minimal orchestrator with /health
-- minimal ai-engine worker skeleton
-- shared event contract for TopicGenerationRequested
-- initial Prisma schema
-- bootstrap README with exact run commands
+- No cross-bounded-context database writes.
+- Each bounded context owns its own data.
+- Every aggregate root and domain row must include organizationId / organization_id.
+- Prefer event-driven integration over direct coupling.
+- Keep implementation deterministic, observable, and easy to test.
 
 ## Working style
 - Plan before coding for large tasks.
-- Make small commits.
-- Run lint/build/tests before declaring success.
-- If architecture is ambiguous, follow docs/01-architecture-rules.md.
+- Prefer small vertical slices.
+- Prefer explicit and maintainable code over abstraction-heavy code.
+- Run build, lint, and tests before claiming completion.
+- If a requirement is ambiguous, choose the smallest implementation that satisfies the roadmap and architecture docs.
+
+## Current delivery phase
+Phase 1 — Foundation & Persistence
+
+## Phase 1 objective
+Deliver the deterministic platform backbone:
+- infrastructure
+- database schemas
+- orchestrator
+- basic REST endpoints
+- outbox/inbox reliability
+- event publication through RabbitMQ
+
+## Out of scope unless explicitly requested by the active phase docs
+- CrewAI flows
+- LLM calls
+- topic discovery
+- planning agents
+- dashboard UI
+- SSE
+- CLI
+- MCP
+- publishing connectors

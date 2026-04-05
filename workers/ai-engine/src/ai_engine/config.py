@@ -20,7 +20,7 @@ class Settings:
     database_url: str
     rabbitmq_url: str
     rabbitmq_exchange: str
-    topic_generation_queue: str
+    audit_queue: str
     consumer_name: str
 
 
@@ -29,9 +29,12 @@ def get_settings() -> Settings:
         database_url=_read("DATABASE_URL"),
         rabbitmq_url=_read("RABBITMQ_URL"),
         rabbitmq_exchange=_read("RABBITMQ_EXCHANGE", "lce.events"),
-        topic_generation_queue=_read(
-            "RABBITMQ_TOPIC_GENERATION_QUEUE",
-            "topic-generation-requested",
+        audit_queue=_read(
+            "RABBITMQ_AUDIT_QUEUE",
+            "audit.integration-events",
         ),
-        consumer_name=_read("TOPIC_CONSUMER_NAME", "ai-engine-topic-generator"),
+        consumer_name=_read(
+            "INTEGRATION_CONSUMER_NAME",
+            "ai-engine-audit-consumer",
+        ),
     )

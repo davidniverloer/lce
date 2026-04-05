@@ -1,6 +1,11 @@
 import type { PrismaClient } from "@prisma/client";
 import amqp, { type Channel, type ChannelModel } from "amqplib";
 
+import {
+  CAMPAIGN_CREATED_EVENT_TYPE,
+  ORGANIZATION_CREATED_EVENT_TYPE,
+} from "@lce/shared-types";
+
 import { config } from "./config";
 
 export class OutboxRelay {
@@ -31,7 +36,6 @@ export class OutboxRelay {
 
     await this.channel?.close().catch(() => undefined);
     await this.connection?.close().catch(() => undefined);
-
     this.channel = null;
     this.connection = null;
   }
@@ -104,13 +108,18 @@ export class OutboxRelay {
     await channel.assertExchange(config.rabbitmqExchange, "direct", {
       durable: true,
     });
-    await channel.assertQueue(config.topicGenerationQueue, {
+    await channel.assertQueue(config.auditQueue, {
       durable: true,
     });
     await channel.bindQueue(
-      config.topicGenerationQueue,
+      config.auditQueue,
       config.rabbitmqExchange,
-      "TopicGenerationRequested",
+      ORGANIZATION_CREATED_EVENT_TYPE,
+    );
+    await channel.bindQueue(
+      config.auditQueue,
+      config.rabbitmqExchange,
+      CAMPAIGN_CREATED_EVENT_TYPE,
     );
     this.channel = channel;
   }

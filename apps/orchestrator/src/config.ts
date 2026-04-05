@@ -1,6 +1,7 @@
-import dotenv from "dotenv";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+
+import dotenv from "dotenv";
 
 const dotenvCandidates = [
   process.env.DOTENV_CONFIG_PATH,
@@ -28,9 +29,6 @@ export const config = {
   databaseUrl: read("DATABASE_URL"),
   rabbitmqUrl: read("RABBITMQ_URL"),
   rabbitmqExchange: read("RABBITMQ_EXCHANGE", "lce.events"),
-  topicGenerationQueue: read(
-    "RABBITMQ_TOPIC_GENERATION_QUEUE",
-    "topic-generation-requested",
-  ),
+  auditQueue: read("RABBITMQ_AUDIT_QUEUE", "audit.integration-events"),
   outboxPollIntervalMs: Number(process.env.OUTBOX_POLL_INTERVAL_MS ?? 2000),
 };

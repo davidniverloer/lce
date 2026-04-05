@@ -1,4 +1,4 @@
-name: Phase 0 Dev Setup
+name: Phase 1 Foundation
 
 on:
   push:
@@ -34,5 +34,5 @@ jobs:
       - name: Prepare environment
         run: cp .env.example .env
 
-      - name: Run Phase 0 CI validation
+      - name: Run Phase 1 CI validation
         run: bash scripts/ci-dev-setup.sh

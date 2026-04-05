@@ -10,15 +10,12 @@ from pika.spec import Basic, BasicProperties
 from sqlalchemy.orm import sessionmaker
 
 from .config import Settings
-from .handler import (
-    parse_topic_generation_requested,
-    process_topic_generation_requested,
-)
+from .handler import parse_integration_event, process_integration_event
 
 LOGGER = logging.getLogger(__name__)
 
 
-class TopicGenerationConsumer:
+class IntegrationEventConsumer:
     def __init__(self, settings: Settings, session_factory: sessionmaker) -> None:
         self._settings = settings
         self._session_factory = session_factory
@@ -43,19 +40,24 @@ class TopicGenerationConsumer:
             exchange_type="direct",
             durable=True,
         )
-        channel.queue_declare(queue=self._settings.topic_generation_queue, durable=True)
+        channel.queue_declare(queue=self._settings.audit_queue, durable=True)
         channel.queue_bind(
-            queue=self._settings.topic_generation_queue,
+            queue=self._settings.audit_queue,
             exchange=self._settings.rabbitmq_exchange,
-            routing_key="TopicGenerationRequested",
+            routing_key="OrganizationCreated",
+        )
+        channel.queue_bind(
+            queue=self._settings.audit_queue,
+            exchange=self._settings.rabbitmq_exchange,
+            routing_key="CampaignCreated",
         )
         channel.basic_qos(prefetch_count=1)
         channel.basic_consume(
-            queue=self._settings.topic_generation_queue,
+            queue=self._settings.audit_queue,
             on_message_callback=self._on_message,
         )
 
-        LOGGER.info("Consuming queue %s", self._settings.topic_generation_queue)
+        LOGGER.info("Consuming queue %s", self._settings.audit_queue)
 
         try:
             channel.start_consuming()
@@ -76,8 +78,8 @@ class TopicGenerationConsumer:
 
         try:
             raw_event = json.loads(body.decode("utf-8"))
-            event = parse_topic_generation_requested(raw_event)
-            inserted = process_topic_generation_requested(
+            event = parse_integration_event(raw_event)
+            inserted = process_integration_event(
                 session_factory=self._session_factory,
                 consumer_name=self._settings.consumer_name,
                 event=event,
