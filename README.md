@@ -1,18 +1,34 @@
 # Lonnser Content Engine
 
-Phase 1 foundation bootstrap for the Lonnser Content Engine (LCE): a pnpm monorepo with a Node.js orchestrator, a Python worker, PostgreSQL, RabbitMQ, Redis, isolated PostgreSQL schemas, and a deterministic organization/campaign event backbone.
+Phase 2 bootstrap for the Lonnser Content Engine (LCE): a pnpm monorepo with a Node.js orchestrator, a Python ai-engine worker, PostgreSQL, RabbitMQ, Redis, transactional outbox publication, and the first bounded AI execution loop.
 
 ## What is included
 
 - `apps/orchestrator`: Express + TypeScript API, Prisma schema, and an outbox relay.
-- `workers/ai-engine`: Python 3.11+ worker using SQLAlchemy, RabbitMQ, and idempotent audit receipts.
-- `packages/shared-types`: shared `OrganizationCreated` and `CampaignCreated` event contracts.
+- `workers/ai-engine`: Python 3.11+ worker using RabbitMQ, SQLAlchemy, CrewAI Flow, and idempotent event consumption.
+- `packages/shared-types`: shared integration event contracts.
 - `infra/docker`: PostgreSQL, RabbitMQ, and Redis compose stack.
+
+## Phase 2 slice
+
+This repo now proves the smallest complete Phase 2 flow:
+
+- `POST /tasks/generate` accepts a manual topic.
+- The orchestrator persists the task and writes `GenerationRequested` to the transactional outbox.
+- The outbox relay publishes the event to RabbitMQ.
+- The Python worker consumes the event idempotently.
+- A deterministic CrewAI Flow runs exactly 2 agents:
+  - Content Generation Agent
+  - QA & Compliance Agent
+- The worker uses a local LLM abstraction with a deterministic `stub` mode and an optional LiteLLM-backed mode.
+- QA can fail once and trigger exactly 1 bounded revision.
+- Draft revisions, QA feedback, run state, and the final approved article are persisted.
+- The final article is stored in the repository model with status `completed`.
 
 ## Prerequisites
 
 - Node.js 20+ and `pnpm`
-- Python 3.11+
+- Python 3.11+, preferably Python 3.13, 3.12, or 3.11 for CrewAI compatibility
 - Docker Desktop
 
 ## Setup
@@ -32,7 +48,7 @@ pnpm install
 3. Create a Python virtual environment and install the worker:
 
 ```bash
-python3 -m venv workers/ai-engine/.venv
+python3.13 -m venv workers/ai-engine/.venv
 source workers/ai-engine/.venv/bin/activate
 pip install -e workers/ai-engine
 ```
@@ -43,14 +59,14 @@ pip install -e workers/ai-engine
 docker compose -f infra/docker/docker-compose.yml up -d
 ```
 
-5. Generate the Prisma client and apply the initial migration:
+5. Generate the Prisma client and apply the migrations:
 
 ```bash
 pnpm db:generate
 pnpm db:migrate
 ```
 
-## Run the Phase 1 slice
+## Run the Phase 2 slice
 
 Start the orchestrator:
 
@@ -62,22 +78,53 @@ In a second terminal, start the worker:
 
 ```bash
 source workers/ai-engine/.venv/bin/activate
-PYTHONPATH=workers/ai-engine/src python -m ai_engine.main
+CREWAI_RUNTIME_HOME="$(pwd)/.crewai-home" PYTHONPATH=workers/ai-engine/src python -m ai_engine.main
 ```
 
-## Smoke path
+## Worker LLM modes
+
+The worker defaults to a deterministic stub so local smoke tests stay runnable without an external model key:
+
+```bash
+AI_ENGINE_LLM_MODE=stub
+```
+
+To use LiteLLM directly in the worker for the two Phase 2 agents, set env vars like:
+
+```bash
+AI_ENGINE_LLM_MODE=litellm
+AI_ENGINE_LLM_MODEL=openai/gpt-4.1-mini
+AI_ENGINE_LLM_API_KEY=<provider-api-key>
+```
+
+For an explicit OpenAI path, you can now use:
+
+```bash
+AI_ENGINE_LLM_MODE=openai
+OPENAI_API_KEY=<your-openai-api-key>
+AI_ENGINE_LLM_MODEL=openai/gpt-4.1-mini
+```
+
+Optional LiteLLM settings:
+
+```bash
+AI_ENGINE_LLM_API_BASE=
+AI_ENGINE_LLM_TEMPERATURE=0.2
+AI_ENGINE_LLM_TIMEOUT_SECONDS=30
+OPENAI_BASE_URL=
+```
+
+This Phase 2 slice uses LiteLLM as a direct Python SDK integration only. Proxy deployment, virtual keys, spend controls, and provider governance are intentionally deferred.
+
+## Smoke paths
 
 ### Option 1: Full bootstrap in separate macOS Terminal windows
-
-This path handles first-time setup, infrastructure, migrations, launches the orchestrator and worker in separate Terminal windows, then runs the end-to-end API check:
 
 ```bash
 bash scripts/bootstrap-and-test-macos.sh
 ```
 
 ### Option 2: Full bootstrap in one terminal with background services
-
-This path handles first-time setup, infrastructure, migrations, starts both services in the background in the same terminal, then runs the end-to-end API check:
 
 ```bash
 bash scripts/bootstrap-and-test-background.sh
@@ -92,13 +139,11 @@ Service logs are written to:
 
 ### Option 3: Lightweight smoke test when services are already running
 
-If Docker, the orchestrator, and the worker are already running, use the lightweight smoke script:
-
 ```bash
 bash scripts/smoke-topic-flow.sh
 ```
 
-### Manual API flow
+## Manual API flow
 
 Create an organization:
 
@@ -109,7 +154,7 @@ curl -s \
   -d '{"name":"Acme"}'
 ```
 
-Create a campaign inside that organization:
+Create a campaign:
 
 ```bash
 curl -s \
@@ -118,11 +163,26 @@ curl -s \
   -d '{"name":"Spring Launch"}'
 ```
 
-Read campaigns for the organization:
+Create a generation task from a manual topic:
 
 ```bash
 curl -s \
-  http://localhost:3000/organizations/<organization-id>/campaigns
+  -X POST http://localhost:3000/tasks/generate \
+  -H 'content-type: application/json' \
+  -d '{
+    "organizationId":"<organization-id>",
+    "campaignId":"<campaign-id>",
+    "topic":"deterministic content operations",
+    "targetAudience":"operations leaders",
+    "outputFormats":["markdown_article"]
+  }'
+```
+
+Read the task status and repository article summary:
+
+```bash
+curl -s \
+  http://localhost:3000/tasks/<task-id>
 ```
 
 ## Validation commands
@@ -130,12 +190,13 @@ curl -s \
 ```bash
 pnpm build
 pnpm typecheck
-python -m compileall workers/ai-engine/src
+workers/ai-engine/.venv/bin/python -m compileall workers/ai-engine/src
+bash scripts/smoke-topic-flow.sh
 ```
 
-## CI/CD Phase 1
+## CI/CD
 
-Phase 1 includes a minimal GitHub Actions workflow for foundation validation in [.github/workflows/phase-1-foundation.yml](/Users/davidniverloer/Desktop/Lonnser%20Content%20Engine/lce/.github/workflows/phase-1-foundation.yml). It verifies:
+Phase validation includes:
 
 - workspace install
 - Python worker install
@@ -143,7 +204,7 @@ Phase 1 includes a minimal GitHub Actions workflow for foundation validation in 
 - TypeScript build
 - TypeScript typecheck
 - Python compile check
-- Docker-backed smoke flow for the Phase 1 slice
+- Docker-backed smoke flow for the Phase 2 slice
 
 Run the same path locally with:
 

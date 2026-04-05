@@ -10,15 +10,25 @@ from pika.spec import Basic, BasicProperties
 from sqlalchemy.orm import sessionmaker
 
 from .config import Settings
-from .handler import parse_integration_event, process_integration_event
+from .handler import (
+    parse_generation_requested_event,
+    process_generation_requested_event,
+)
+from .llm import LLMProvider
 
 LOGGER = logging.getLogger(__name__)
 
 
-class IntegrationEventConsumer:
-    def __init__(self, settings: Settings, session_factory: sessionmaker) -> None:
+class GenerationRequestedConsumer:
+    def __init__(
+        self,
+        settings: Settings,
+        session_factory: sessionmaker,
+        llm_provider: LLMProvider,
+    ) -> None:
         self._settings = settings
         self._session_factory = session_factory
+        self._llm_provider = llm_provider
 
     def run_forever(self) -> None:
         while True:
@@ -40,24 +50,19 @@ class IntegrationEventConsumer:
             exchange_type="direct",
             durable=True,
         )
-        channel.queue_declare(queue=self._settings.audit_queue, durable=True)
+        channel.queue_declare(queue=self._settings.generation_queue, durable=True)
         channel.queue_bind(
-            queue=self._settings.audit_queue,
+            queue=self._settings.generation_queue,
             exchange=self._settings.rabbitmq_exchange,
-            routing_key="OrganizationCreated",
-        )
-        channel.queue_bind(
-            queue=self._settings.audit_queue,
-            exchange=self._settings.rabbitmq_exchange,
-            routing_key="CampaignCreated",
+            routing_key="GenerationRequested",
         )
         channel.basic_qos(prefetch_count=1)
         channel.basic_consume(
-            queue=self._settings.audit_queue,
+            queue=self._settings.generation_queue,
             on_message_callback=self._on_message,
         )
 
-        LOGGER.info("Consuming queue %s", self._settings.audit_queue)
+        LOGGER.info("Consuming queue %s", self._settings.generation_queue)
 
         try:
             channel.start_consuming()
@@ -78,22 +83,23 @@ class IntegrationEventConsumer:
 
         try:
             raw_event = json.loads(body.decode("utf-8"))
-            event = parse_integration_event(raw_event)
-            inserted = process_integration_event(
+            event = parse_generation_requested_event(raw_event)
+            inserted = process_generation_requested_event(
                 session_factory=self._session_factory,
                 consumer_name=self._settings.consumer_name,
                 event=event,
+                llm_provider=self._llm_provider,
             )
 
             if inserted:
-                LOGGER.info("Processed event %s", event.event_id)
+                LOGGER.info("Processed generation task %s", event.request.task_id)
             else:
                 LOGGER.info("Skipped duplicate event %s", event.event_id)
 
             channel.basic_ack(delivery_tag=method.delivery_tag)
         except ValueError:
-            LOGGER.exception("Discarding invalid event")
+            LOGGER.exception("Discarding invalid generation event")
             channel.basic_ack(delivery_tag=method.delivery_tag)
         except Exception:
-            LOGGER.exception("Failed to process event; requeueing")
+            LOGGER.exception("Failed to process generation event; requeueing")
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=True)

@@ -5,8 +5,10 @@ dist
 .venv
 .logs
 .logs-ci-*.log
+.crewai-home
 __pycache__
 .pytest_cache
 *.pyc
+*.egg-info
 coverage
 apps/orchestrator/generated

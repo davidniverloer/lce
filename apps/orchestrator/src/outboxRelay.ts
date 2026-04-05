@@ -2,8 +2,7 @@ import type { PrismaClient } from "@prisma/client";
 import amqp, { type Channel, type ChannelModel } from "amqplib";
 
 import {
-  CAMPAIGN_CREATED_EVENT_TYPE,
-  ORGANIZATION_CREATED_EVENT_TYPE,
+  GENERATION_REQUESTED_EVENT_TYPE,
 } from "@lce/shared-types";
 
 import { config } from "./config";
@@ -108,18 +107,13 @@ export class OutboxRelay {
     await channel.assertExchange(config.rabbitmqExchange, "direct", {
       durable: true,
     });
-    await channel.assertQueue(config.auditQueue, {
+    await channel.assertQueue(config.generationQueue, {
       durable: true,
     });
     await channel.bindQueue(
-      config.auditQueue,
+      config.generationQueue,
       config.rabbitmqExchange,
-      ORGANIZATION_CREATED_EVENT_TYPE,
-    );
-    await channel.bindQueue(
-      config.auditQueue,
-      config.rabbitmqExchange,
-      CAMPAIGN_CREATED_EVENT_TYPE,
+      GENERATION_REQUESTED_EVENT_TYPE,
     );
     this.channel = channel;
   }

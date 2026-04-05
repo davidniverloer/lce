@@ -29,6 +29,6 @@ export const config = {
   databaseUrl: read("DATABASE_URL"),
   rabbitmqUrl: read("RABBITMQ_URL"),
   rabbitmqExchange: read("RABBITMQ_EXCHANGE", "lce.events"),
-  auditQueue: read("RABBITMQ_AUDIT_QUEUE", "audit.integration-events"),
+  generationQueue: read("RABBITMQ_GENERATION_QUEUE", "content.generation-requests"),
   outboxPollIntervalMs: Number(process.env.OUTBOX_POLL_INTERVAL_MS ?? 2000),
 };

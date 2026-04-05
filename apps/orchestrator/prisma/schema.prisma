@@ -28,10 +28,95 @@ model Campaign {
   createdAt      DateTime     @default(now()) @map("created_at")
   updatedAt      DateTime     @updatedAt @map("updated_at")
   organization   Organization @relation(fields: [organizationId], references: [id])
+  generationTasks GenerationTask[]
 
   @@index([organizationId, id])
   @@map("campaigns")
   @@schema("campaign")
+}
+
+model GenerationTask {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  campaignId     String   @map("campaign_id") @db.Uuid
+  topic          String
+  targetAudience String?  @map("target_audience")
+  outputFormats  Json     @map("output_formats")
+  status         String
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+  completedAt    DateTime? @map("completed_at")
+  campaign       Campaign @relation(fields: [campaignId], references: [id])
+
+  @@index([organizationId, id])
+  @@index([campaignId, id])
+  @@map("generation_tasks")
+  @@schema("content")
+}
+
+model GenerationRun {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  taskId         String   @map("task_id") @db.Uuid
+  campaignId     String   @map("campaign_id") @db.Uuid
+  status         String
+  stateJson      Json     @map("state_json")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@unique([taskId])
+  @@index([organizationId, id])
+  @@map("generation_runs")
+  @@schema("content")
+}
+
+model DraftRevision {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  taskId         String   @map("task_id") @db.Uuid
+  runId          String   @map("run_id") @db.Uuid
+  revisionNumber Int      @map("revision_number")
+  title          String
+  body           String
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@unique([taskId, revisionNumber])
+  @@index([organizationId, taskId])
+  @@map("draft_revisions")
+  @@schema("content")
+}
+
+model QaFeedback {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  taskId         String   @map("task_id") @db.Uuid
+  runId          String   @map("run_id") @db.Uuid
+  revisionNumber Int      @map("revision_number")
+  passed         Boolean
+  feedback       String
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@unique([taskId, revisionNumber])
+  @@index([organizationId, taskId])
+  @@map("qa_feedback")
+  @@schema("content")
+}
+
+model RepositoryArticle {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  campaignId     String   @map("campaign_id") @db.Uuid
+  taskId         String   @map("task_id") @db.Uuid
+  title          String
+  body           String
+  status         String
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@unique([taskId])
+  @@index([organizationId, id])
+  @@map("articles")
+  @@schema("repository")
 }
 
 model OutboxEvent {
