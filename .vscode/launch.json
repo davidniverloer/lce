@@ -1,0 +1,32 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Orchestrator",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/apps/orchestrator",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--filter",
+        "@lce/orchestrator",
+        "dev"
+      ],
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "AI Engine Worker",
+      "type": "python",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/workers/ai-engine",
+      "module": "ai_engine.main",
+      "python": "${workspaceFolder}/workers/ai-engine/.venv/bin/python",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/workers/ai-engine/src"
+      },
+      "console": "integratedTerminal"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "name": "lce",
+  "private": true,
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "db:generate": "pnpm --filter @lce/orchestrator db:generate",
+    "db:migrate": "pnpm --filter @lce/orchestrator db:migrate",
+    "dev:orchestrator": "pnpm --filter @lce/orchestrator dev",
+    "smoke": "bash scripts/smoke-topic-flow.sh",
+    "ci:dev-setup": "bash scripts/ci-dev-setup.sh"
+  }
+}
