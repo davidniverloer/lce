@@ -1,0 +1,56 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Campaign {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id")
+  name           String
+  niche          String
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@index([organizationId, id])
+  @@map("campaigns")
+}
+
+model Topic {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id")
+  campaignId     String   @map("campaign_id") @db.Uuid
+  title          String
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([organizationId, id])
+  @@index([organizationId, campaignId])
+  @@map("topics")
+}
+
+model OutboxEvent {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("organization_id")
+  eventType      String    @map("event_type")
+  payload        Json
+  processed      Boolean   @default(false)
+  processedAt    DateTime? @map("processed_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@index([organizationId, id])
+  @@index([processed, createdAt])
+  @@map("outbox_events")
+}
+
+model ProcessedEventLog {
+  organizationId String   @map("organization_id")
+  eventId        String   @map("event_id")
+  consumerName   String   @map("consumer_name")
+  processedAt    DateTime @default(now()) @map("processed_at")
+
+  @@id([organizationId, eventId, consumerName])
+  @@map("processed_event_log")
+}
