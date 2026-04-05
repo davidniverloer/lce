@@ -49,6 +49,7 @@ class StubLLMProvider:
             target_audience = payload.get("target_audience")
             revision_number = int(payload["revision_number"])
             qa_feedback = payload.get("qa_feedback")
+            blueprint = payload.get("blueprint")
 
             audience = (
                 str(target_audience).strip()
@@ -56,6 +57,21 @@ class StubLLMProvider:
                 else "General audience"
             )
             title = f"{topic}: Practical Guide"
+            sections = (
+                blueprint.get("sections")
+                if isinstance(blueprint, dict) and isinstance(blueprint.get("sections"), list)
+                else ["Overview", "Core Points", "Next Steps"]
+            )
+            style_guidance = (
+                str(blueprint.get("style_guidance"))
+                if isinstance(blueprint, dict) and blueprint.get("style_guidance")
+                else "Use clear, neutral, reviewable language."
+            )
+            internal_links = (
+                blueprint.get("internal_links")
+                if isinstance(blueprint, dict) and isinstance(blueprint.get("internal_links"), list)
+                else []
+            )
             body_lines = [
                 f"# {title}",
                 "",
@@ -64,11 +80,35 @@ class StubLLMProvider:
                 f"{topic} matters because teams need a reliable, easy-to-review starting point.",
                 "This draft explains the main idea, the expected outcome, and a simple action plan.",
                 "",
-                "## Core Points",
-                f"- Define the scope of {topic}.",
-                "- Explain the operational benefit clearly.",
-                "- Close with a concrete next step.",
+                f"Style Guidance: {style_guidance}",
             ]
+
+            for section in sections:
+                body_lines.extend(
+                    [
+                        "",
+                        f"## {section}",
+                        f"- Explain how {topic} supports this section.",
+                        "- Keep the guidance specific and reviewable.",
+                    ]
+                )
+
+            if internal_links:
+                body_lines.extend(["", "## Internal Link Opportunities"])
+                for item in internal_links:
+                    if isinstance(item, dict):
+                        body_lines.append(
+                            f"- Reference [{item.get('anchor_text', 'related guidance')}]({item.get('url', '#')}) to connect this article to existing site knowledge."
+                        )
+
+            body_lines.extend(
+                [
+                    "",
+                    "## Next Steps",
+                    "- Confirm the proposed process with the operating team.",
+                    "- Review the plan against the compliance checklist.",
+                ]
+            )
 
             if revision_number > 0:
                 body_lines.extend(
@@ -90,8 +130,35 @@ class StubLLMProvider:
                 }
             )
 
+        if operation_name == "build_article_blueprint":
+            topic = str(payload["topic"])
+            target_audience = payload.get("target_audience")
+
+            audience = (
+                str(target_audience).strip()
+                if isinstance(target_audience, str) and target_audience.strip()
+                else "General audience"
+            )
+
+            return response_model.model_validate(
+                {
+                    "angle": f"Show {audience.lower()} how to operationalize {topic} with clear internal references.",
+                    "sections": [
+                        "Context",
+                        "Operational Workflow",
+                        "Internal Alignment",
+                        "Execution Checklist",
+                    ],
+                    "style_guidance": (
+                        "Use concise, reviewable language with explicit operational recommendations "
+                        "and natural internal-link callouts."
+                    ),
+                }
+            )
+
         if operation_name == "review_draft":
             body = str(payload["body"])
+            expected_sections = payload.get("expected_sections") or []
 
             if "## Compliance Checklist" not in body:
                 return response_model.model_validate(
@@ -110,6 +177,25 @@ class StubLLMProvider:
                         "feedback": "State the target audience explicitly in the article body.",
                     }
                 )
+
+            if isinstance(expected_sections, list):
+                missing_section = next(
+                    (
+                        section
+                        for section in expected_sections
+                        if isinstance(section, str) and f"## {section}" not in body
+                    ),
+                    None,
+                )
+                if missing_section:
+                    return response_model.model_validate(
+                        {
+                            "passed": False,
+                            "feedback": (
+                                f"Add the planned section '{missing_section}' so the draft follows the approved blueprint."
+                            ),
+                        }
+                    )
 
             return response_model.model_validate(
                 {

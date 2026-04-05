@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(dotenv_path=os.getenv("DOTENV_CONFIG_PATH"))
 
 
 def _read(name: str, default: str | None = None) -> str:
@@ -42,6 +42,9 @@ class Settings:
     rabbitmq_exchange: str
     generation_queue: str
     consumer_name: str
+    market_signal_mode: str
+    dataforseo_login: str | None
+    dataforseo_password: str | None
     llm_mode: str
     llm_model: str | None
     llm_api_key: str | None
@@ -65,6 +68,9 @@ def get_settings() -> Settings:
             "INTEGRATION_CONSUMER_NAME",
             "ai-engine-generation-consumer",
         ),
+        market_signal_mode=_read("MARKET_SIGNAL_MODE", "stub"),
+        dataforseo_login=_read_optional("DATAFORSEO_LOGIN"),
+        dataforseo_password=_read_optional("DATAFORSEO_PASSWORD"),
         llm_mode=_read("AI_ENGINE_LLM_MODE", "stub"),
         llm_model=_read_optional("AI_ENGINE_LLM_MODEL"),
         llm_api_key=_read_optional("AI_ENGINE_LLM_API_KEY"),

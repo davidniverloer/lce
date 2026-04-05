@@ -9,6 +9,10 @@ export type EventEnvelope<TPayload, TType extends string> = {
 export const ORGANIZATION_CREATED_EVENT_TYPE = "OrganizationCreated";
 export const CAMPAIGN_CREATED_EVENT_TYPE = "CampaignCreated";
 export const GENERATION_REQUESTED_EVENT_TYPE = "GenerationRequested";
+export const TOPIC_GENERATION_REQUESTED_EVENT_TYPE = "TopicGenerationRequested";
+export const TOPIC_QUALIFIED_EVENT_TYPE = "TopicQualified";
+export const SITEMAP_UPDATED_EVENT_TYPE = "SitemapUpdated";
+export const BLUEPRINT_VALIDATED_EVENT_TYPE = "BlueprintValidated";
 export const INTEGRATION_EVENT_VERSION = "1.0" as const;
 
 export type OrganizationCreatedPayload = {
@@ -29,6 +33,58 @@ export type GenerationRequestedPayload = {
   topic: string;
   targetAudience: string | null;
   outputFormats: string[];
+  blueprintId?: string | null;
+  blueprint?: ArticleBlueprintSnapshot | null;
+};
+
+export type ArticleBlueprintSnapshot = {
+  topic: string;
+  targetAudience: string | null;
+  angle: string;
+  sections: string[];
+  styleGuidance: string;
+  internalLinks: InternalLinkSnapshot[];
+};
+
+export type InternalLinkSnapshot = {
+  url: string;
+  title: string;
+  anchorText: string;
+  rationale: string;
+};
+
+export type TopicGenerationRequestedPayload = {
+  organizationId: string;
+  campaignId: string;
+  analysisRequestId: string;
+  seedTopic: string;
+  targetAudience: string | null;
+};
+
+export type TopicQualifiedPayload = {
+  organizationId: string;
+  campaignId: string;
+  analysisRequestId: string;
+  qualifiedTopicId: string;
+  topic: string;
+  score: number;
+  targetAudience: string | null;
+};
+
+export type SitemapUpdatedPayload = {
+  organizationId: string;
+  campaignId: string;
+  sitemapIngestionId: string;
+  sitemapUrl: string;
+  indexedPageCount: number;
+};
+
+export type BlueprintValidatedPayload = {
+  organizationId: string;
+  campaignId: string;
+  qualifiedTopicId: string;
+  sitemapIngestionId: string;
+  blueprintId: string;
 };
 
 export type OrganizationCreatedEvent = EventEnvelope<
@@ -46,10 +102,34 @@ export type GenerationRequestedEvent = EventEnvelope<
   typeof GENERATION_REQUESTED_EVENT_TYPE
 >;
 
+export type TopicGenerationRequestedEvent = EventEnvelope<
+  TopicGenerationRequestedPayload,
+  typeof TOPIC_GENERATION_REQUESTED_EVENT_TYPE
+>;
+
+export type TopicQualifiedEvent = EventEnvelope<
+  TopicQualifiedPayload,
+  typeof TOPIC_QUALIFIED_EVENT_TYPE
+>;
+
+export type SitemapUpdatedEvent = EventEnvelope<
+  SitemapUpdatedPayload,
+  typeof SITEMAP_UPDATED_EVENT_TYPE
+>;
+
+export type BlueprintValidatedEvent = EventEnvelope<
+  BlueprintValidatedPayload,
+  typeof BLUEPRINT_VALIDATED_EVENT_TYPE
+>;
+
 export type IntegrationEvent =
   | OrganizationCreatedEvent
   | CampaignCreatedEvent
-  | GenerationRequestedEvent;
+  | GenerationRequestedEvent
+  | TopicGenerationRequestedEvent
+  | TopicQualifiedEvent
+  | SitemapUpdatedEvent
+  | BlueprintValidatedEvent;
 
 export const isOrganizationCreatedEvent = (
   value: unknown,
@@ -113,6 +193,139 @@ export const isGenerationRequestedEvent = (
     typeof payload.topic === "string" &&
     (typeof payload.targetAudience === "string" || payload.targetAudience === null) &&
     Array.isArray(payload.outputFormats) &&
-    payload.outputFormats.every((value) => typeof value === "string")
+    payload.outputFormats.every((value) => typeof value === "string") &&
+    (payload.blueprintId === undefined ||
+      payload.blueprintId === null ||
+      typeof payload.blueprintId === "string") &&
+    (payload.blueprint === undefined ||
+      payload.blueprint === null ||
+      isArticleBlueprintSnapshot(payload.blueprint))
+  );
+};
+
+export const isTopicGenerationRequestedEvent = (
+  value: unknown,
+): value is TopicGenerationRequestedEvent => {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  const payload = candidate.payload as Record<string, unknown> | undefined;
+
+  return (
+    typeof candidate.eventId === "string" &&
+    candidate.eventType === TOPIC_GENERATION_REQUESTED_EVENT_TYPE &&
+    candidate.version === INTEGRATION_EVENT_VERSION &&
+    typeof candidate.timestamp === "string" &&
+    typeof payload?.organizationId === "string" &&
+    typeof payload.campaignId === "string" &&
+    typeof payload.analysisRequestId === "string" &&
+    typeof payload.seedTopic === "string" &&
+    (typeof payload.targetAudience === "string" || payload.targetAudience === null)
+  );
+};
+
+export const isTopicQualifiedEvent = (value: unknown): value is TopicQualifiedEvent => {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  const payload = candidate.payload as Record<string, unknown> | undefined;
+
+  return (
+    typeof candidate.eventId === "string" &&
+    candidate.eventType === TOPIC_QUALIFIED_EVENT_TYPE &&
+    candidate.version === INTEGRATION_EVENT_VERSION &&
+    typeof candidate.timestamp === "string" &&
+    typeof payload?.organizationId === "string" &&
+    typeof payload.campaignId === "string" &&
+    typeof payload.analysisRequestId === "string" &&
+    typeof payload.qualifiedTopicId === "string" &&
+    typeof payload.topic === "string" &&
+    typeof payload.score === "number" &&
+    (typeof payload.targetAudience === "string" || payload.targetAudience === null)
+  );
+};
+
+export const isSitemapUpdatedEvent = (value: unknown): value is SitemapUpdatedEvent => {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  const payload = candidate.payload as Record<string, unknown> | undefined;
+
+  return (
+    typeof candidate.eventId === "string" &&
+    candidate.eventType === SITEMAP_UPDATED_EVENT_TYPE &&
+    candidate.version === INTEGRATION_EVENT_VERSION &&
+    typeof candidate.timestamp === "string" &&
+    typeof payload?.organizationId === "string" &&
+    typeof payload.campaignId === "string" &&
+    typeof payload.sitemapIngestionId === "string" &&
+    typeof payload.sitemapUrl === "string" &&
+    typeof payload.indexedPageCount === "number"
+  );
+};
+
+export const isBlueprintValidatedEvent = (
+  value: unknown,
+): value is BlueprintValidatedEvent => {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  const payload = candidate.payload as Record<string, unknown> | undefined;
+
+  return (
+    typeof candidate.eventId === "string" &&
+    candidate.eventType === BLUEPRINT_VALIDATED_EVENT_TYPE &&
+    candidate.version === INTEGRATION_EVENT_VERSION &&
+    typeof candidate.timestamp === "string" &&
+    typeof payload?.organizationId === "string" &&
+    typeof payload.campaignId === "string" &&
+    typeof payload.qualifiedTopicId === "string" &&
+    typeof payload.sitemapIngestionId === "string" &&
+    typeof payload.blueprintId === "string"
+  );
+};
+
+const isInternalLinkSnapshot = (value: unknown): value is InternalLinkSnapshot => {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+
+  return (
+    typeof candidate.url === "string" &&
+    typeof candidate.title === "string" &&
+    typeof candidate.anchorText === "string" &&
+    typeof candidate.rationale === "string"
+  );
+};
+
+const isArticleBlueprintSnapshot = (
+  value: unknown,
+): value is ArticleBlueprintSnapshot => {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+
+  return (
+    typeof candidate.topic === "string" &&
+    (typeof candidate.targetAudience === "string" ||
+      candidate.targetAudience === null) &&
+    typeof candidate.angle === "string" &&
+    typeof candidate.styleGuidance === "string" &&
+    Array.isArray(candidate.sections) &&
+    candidate.sections.every((item) => typeof item === "string") &&
+    Array.isArray(candidate.internalLinks) &&
+    candidate.internalLinks.every(isInternalLinkSnapshot)
   );
 };

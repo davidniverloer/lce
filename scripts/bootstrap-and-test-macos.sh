@@ -11,7 +11,7 @@ python_bin=""
 base_url="${BASE_URL:-http://localhost:3000}"
 organization_name="${ORGANIZATION_NAME:-Demo Org}"
 campaign_name="${CAMPAIGN_NAME:-Spring Launch}"
-manual_topic="${MANUAL_TOPIC:-deterministic content operations}"
+seed_topic="${SEED_TOPIC:-deterministic content operations}"
 docker_compose_file="${repo_root}/infra/docker/docker-compose.yml"
 
 require_command() {
@@ -156,5 +156,5 @@ printf 'Campaign response: %s\n' "${campaign_response}"
 campaign_id="$(printf '%s' "${campaign_response}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
 printf 'Campaign id: %s\n' "${campaign_id}"
 
-echo "Running Phase 2 smoke validation"
-MANUAL_TOPIC="${manual_topic}" bash "${repo_root}/scripts/smoke-topic-flow.sh"
+echo "Running Phase 3 smoke validation"
+SEED_TOPIC="${seed_topic}" bash "${repo_root}/scripts/smoke-topic-flow.sh"

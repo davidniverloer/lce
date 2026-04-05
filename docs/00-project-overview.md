@@ -25,14 +25,13 @@ The system follows a stateful decoupling architecture:
 - State / cache: Redis
 
 ## Current phase
-Phase 1 — Foundation & Persistence
+Phase 3 — Market & Semantic Intelligence
 
-## Phase 1 summary
-Build the deterministic platform backbone without introducing AI generation complexity yet.
+## Phase 3 summary
+Add topic discovery, topic qualification, sitemap intelligence, and article planning on top of the existing generation engine.
 
-## What Phase 1 is not
-- not CrewAI generation
-- not topic discovery
-- not planning intelligence
+## What Phase 3 is not
 - not dashboard productization
-- not CLI or MCP
+- not full SaaS quota/role UX rollout
+- not SSE, CLI, or MCP
+- not publishing connectors

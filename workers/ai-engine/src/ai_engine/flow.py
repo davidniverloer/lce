@@ -9,7 +9,13 @@ from crewai.flow.flow import Flow, FlowState, listen, start
 from pydantic import Field
 from sqlalchemy.orm import Session
 
-from .agents import ContentGenerationAgent, DraftOutput, QaComplianceAgent
+from .agents import (
+    BlueprintOutput,
+    ContentGenerationAgent,
+    DraftOutput,
+    InternalLinkSuggestion,
+    QaComplianceAgent,
+)
 from .models import (
     DraftRevision,
     GenerationRun,
@@ -26,6 +32,9 @@ class ArticleGenerationState(FlowState):
     topic: str
     target_audience: str | None = None
     output_formats: list[str] = Field(default_factory=list)
+    qualified_topic_id: str | None = None
+    blueprint_id: str | None = None
+    blueprint: dict | None = None
     run_id: str
     status: str = "processing"
     revision_number: int = 0
@@ -45,6 +54,38 @@ class GenerationRequest:
     topic: str
     target_audience: str | None
     output_formats: list[str]
+    qualified_topic_id: str | None = None
+    blueprint_id: str | None = None
+    blueprint: dict | None = None
+
+
+def _hydrate_blueprint(raw_blueprint: dict | None) -> BlueprintOutput | None:
+    if not raw_blueprint:
+        return None
+
+    internal_links = [
+        InternalLinkSuggestion(
+            url=str(item["url"]),
+            title=str(item["title"]),
+            anchor_text=str(item["anchorText"]),
+            rationale=str(item["rationale"]),
+        )
+        for item in raw_blueprint.get("internalLinks", [])
+        if isinstance(item, dict)
+    ]
+
+    return BlueprintOutput(
+        topic=str(raw_blueprint["topic"]),
+        target_audience=(
+            str(raw_blueprint["targetAudience"])
+            if raw_blueprint.get("targetAudience") is not None
+            else None
+        ),
+        angle=str(raw_blueprint["angle"]),
+        sections=[str(item) for item in raw_blueprint.get("sections", [])],
+        style_guidance=str(raw_blueprint["styleGuidance"]),
+        internal_links=internal_links,
+    )
 
 
 class ArticleGenerationFlow(Flow[ArticleGenerationState]):
@@ -63,10 +104,12 @@ class ArticleGenerationFlow(Flow[ArticleGenerationState]):
             topic=request.topic,
             target_audience=request.target_audience,
             output_formats=request.output_formats,
+            qualified_topic_id=request.qualified_topic_id,
+            blueprint_id=request.blueprint_id,
+            blueprint=request.blueprint,
             run_id=str(uuid.uuid4()),
         )
         super().__init__(initial_state=initial_state)
-        self._request = request
         self._session = session
         self._content_agent = content_agent
         self._qa_agent = qa_agent
@@ -97,6 +140,7 @@ class ArticleGenerationFlow(Flow[ArticleGenerationState]):
             target_audience=self.state.target_audience,
             revision_number=0,
             qa_feedback=None,
+            blueprint=self._blueprint(),
         )
         self._store_draft(draft, revision_number=0)
         return "draft_generated"
@@ -117,6 +161,7 @@ class ArticleGenerationFlow(Flow[ArticleGenerationState]):
             target_audience=self.state.target_audience,
             revision_number=1,
             qa_feedback=self.state.qa_feedback,
+            blueprint=self._blueprint(),
         )
         self.state.revision_number = 1
         self._store_draft(draft, revision_number=1)
@@ -156,6 +201,9 @@ class ArticleGenerationFlow(Flow[ArticleGenerationState]):
         self._persist_run_state("completed")
         return "article_stored"
 
+    def _blueprint(self) -> BlueprintOutput | None:
+        return _hydrate_blueprint(self.state.blueprint)
+
     def _get_task(self) -> GenerationTask:
         task = self._session.get(GenerationTask, self.state.task_id)
         if task is None:
@@ -185,7 +233,7 @@ class ArticleGenerationFlow(Flow[ArticleGenerationState]):
             title=self.state.current_title or "Untitled Draft",
             body=self.state.current_body or "",
         )
-        review = self._qa_agent.review(draft)
+        review = self._qa_agent.review(draft, self._blueprint())
         self.state.qa_passed = review.passed
         self.state.qa_feedback = review.feedback
         self.state.status = "approved" if review.passed else "revision_requested"
