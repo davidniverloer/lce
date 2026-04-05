@@ -7,10 +7,12 @@ Build the Lonnser Content Engine incrementally, phase by phase, following the ro
 Always read these first:
 - docs/00-project-overview.md
 - docs/01-global-architecture-rules.md
-- docs/10-phase-1-foundation-persistence.md
-- docs/11-phase-1-acceptance-criteria.md
-- docs/12-phase-1-deliverables.md
-- docs/13-phase-1-event-and-data-rules.md
+- docs/20-phase-2-core-agentic-engine.md
+- docs/21-phase-2-acceptance-criteria.md
+- docs/22-phase-2-deliverables.md
+- docs/23-phase-2-worker-and-flow-rules.md
+- docs/24-phase-2-event-contracts.md
+- docs/90-future-phases-summary.md
 
 ## Permanent architecture rules
 - Use a pnpm monorepo.
@@ -24,7 +26,7 @@ Always read these first:
 - Each bounded context owns its own data.
 - Every aggregate root and domain row must include organizationId / organization_id.
 - Prefer event-driven integration over direct coupling.
-- Keep implementation deterministic, observable, and easy to test.
+- Keep deterministic orchestration separate from adaptive AI logic.
 
 ## Working style
 - Plan before coding for large tasks.
@@ -34,23 +36,26 @@ Always read these first:
 - If a requirement is ambiguous, choose the smallest implementation that satisfies the roadmap and architecture docs.
 
 ## Current delivery phase
-Phase 1 — Foundation & Persistence
+Phase 2 — Core Agentic Engine
 
-## Phase 1 objective
-Deliver the deterministic platform backbone:
-- infrastructure
-- database schemas
-- orchestrator
-- basic REST endpoints
-- outbox/inbox reliability
-- event publication through RabbitMQ
+## Phase 2 objective
+Deliver the first real AI execution loop:
+- worker engine
+- CrewAI flow with persistent typed state
+- Content Generation Agent
+- QA & Compliance Agent
+- iterative revision loop
+- approved content stored in repository
 
-## Out of scope unless explicitly requested by the active phase docs
-- CrewAI flows
-- LLM calls
-- topic discovery
-- planning agents
-- dashboard UI
+## Out of scope unless explicitly requested
+- topic discovery / market awareness
+- DataForSEO
+- Reddit
+- Google Trends
+- sitemap ingestion
+- Structure & Style Agent
+- dashboard productization
+- CQRS UI views beyond what already exists
 - SSE
 - CLI
 - MCP

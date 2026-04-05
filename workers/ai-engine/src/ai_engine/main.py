@@ -3,8 +3,13 @@ from __future__ import annotations
 import logging
 
 from .config import get_settings
-from .consumer import IntegrationEventConsumer
 from .db import create_session_factory
+from .llm import create_llm_provider
+from .runtime import prepare_crewai_runtime
+
+prepare_crewai_runtime()
+
+from .consumer import GenerationRequestedConsumer
 
 
 def main() -> None:
@@ -15,7 +20,8 @@ def main() -> None:
 
     settings = get_settings()
     session_factory = create_session_factory(settings.database_url)
-    consumer = IntegrationEventConsumer(settings, session_factory)
+    llm_provider = create_llm_provider(settings)
+    consumer = GenerationRequestedConsumer(settings, session_factory, llm_provider)
     consumer.run_forever()
 
 

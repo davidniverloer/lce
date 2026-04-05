@@ -1,9 +1,12 @@
 Metadata-Version: 2.4
 Name: lce-ai-engine
 Version: 0.1.0
-Summary: Day 1 AI worker for LCE
+Summary: Phase 2 AI worker for LCE
 Requires-Python: >=3.11
+Requires-Dist: crewai<2.0.0,>=1.0.0
+Requires-Dist: litellm<2.0.0,>=1.79.0
 Requires-Dist: pika<2.0.0,>=1.3.2
 Requires-Dist: psycopg[binary]<4.0.0,>=3.2.6
-Requires-Dist: python-dotenv<2.0.0,>=1.0.1
+Requires-Dist: pydantic<3.0.0,>=2.11.0
+Requires-Dist: python-dotenv<2.0.0,>=1.1.1
 Requires-Dist: SQLAlchemy<3.0.0,>=2.0.40

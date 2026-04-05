@@ -6,12 +6,25 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 worker_dir="${repo_root}/workers/ai-engine"
 venv_dir="${worker_dir}/.venv"
 docker_compose_file="${repo_root}/infra/docker/docker-compose.yml"
+python_bin=""
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
     echo "Missing required command: $1" >&2
     exit 1
   fi
+}
+
+resolve_python_bin() {
+  for candidate in python3.13 python3.12 python3.11 python3; do
+    if command -v "${candidate}" >/dev/null 2>&1; then
+      python_bin="${candidate}"
+      return 0
+    fi
+  done
+
+  echo "Missing required Python interpreter (expected python3.11+)." >&2
+  exit 1
 }
 
 wait_for_url() {
@@ -57,9 +70,9 @@ cleanup() {
 }
 
 require_command pnpm
-require_command python3
 require_command curl
 require_command docker
+resolve_python_bin
 
 trap cleanup EXIT INT TERM
 
@@ -76,7 +89,7 @@ set +a
 CI=true pnpm install
 
 if [ ! -d "${venv_dir}" ]; then
-  python3 -m venv "${venv_dir}"
+  "${python_bin}" -m venv "${venv_dir}"
 fi
 
 "${venv_dir}/bin/pip" install -e "${worker_dir}"
@@ -98,7 +111,7 @@ ORCHESTRATOR_PID=$!
 (
   cd "${worker_dir}"
   source "${venv_dir}/bin/activate"
-  PYTHONPATH="${worker_dir}/src" python -m ai_engine.main
+  CREWAI_RUNTIME_HOME="${repo_root}/.crewai-home" PYTHONPATH="${worker_dir}/src" python -m ai_engine.main
 ) > "${repo_root}/.logs-ci-worker.log" 2>&1 &
 WORKER_PID=$!
 

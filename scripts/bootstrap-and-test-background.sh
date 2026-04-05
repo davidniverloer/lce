@@ -7,10 +7,12 @@ orchestrator_dir="${repo_root}/apps/orchestrator"
 worker_dir="${repo_root}/workers/ai-engine"
 venv_dir="${worker_dir}/.venv"
 logs_dir="${repo_root}/.logs"
+python_bin=""
 
 base_url="${BASE_URL:-http://localhost:3000}"
 organization_name="${ORGANIZATION_NAME:-Demo Org}"
 campaign_name="${CAMPAIGN_NAME:-Spring Launch}"
+manual_topic="${MANUAL_TOPIC:-deterministic content operations}"
 docker_compose_file="${repo_root}/infra/docker/docker-compose.yml"
 orchestrator_log="${logs_dir}/orchestrator.log"
 worker_log="${logs_dir}/ai-engine.log"
@@ -23,6 +25,18 @@ require_command() {
     echo "Missing required command: $1" >&2
     exit 1
   fi
+}
+
+resolve_python_bin() {
+  for candidate in python3.13 python3.12 python3.11 python3; do
+    if command -v "${candidate}" >/dev/null 2>&1; then
+      python_bin="${candidate}"
+      return 0
+    fi
+  done
+
+  echo "Missing required Python interpreter (expected python3.11+)." >&2
+  exit 1
 }
 
 stop_existing_processes() {
@@ -89,11 +103,11 @@ wait_for_health() {
 
 require_command cp
 require_command pnpm
-require_command python3
 require_command curl
 require_command docker
 require_command lsof
 require_command pgrep
+resolve_python_bin
 
 trap cleanup EXIT INT TERM
 
@@ -118,7 +132,7 @@ CI=true pnpm install
 
 if [ ! -d "${venv_dir}" ]; then
   echo "Creating Python virtual environment"
-  python3 -m venv "${venv_dir}"
+  "${python_bin}" -m venv "${venv_dir}"
 fi
 
 echo "Installing Python worker dependencies"
@@ -146,7 +160,7 @@ echo "Starting worker in background"
 (
   cd "${worker_dir}"
   source "${venv_dir}/bin/activate"
-  PYTHONPATH="${worker_dir}/src" python -m ai_engine.main
+  CREWAI_RUNTIME_HOME="${repo_root}/.crewai-home" PYTHONPATH="${worker_dir}/src" python -m ai_engine.main
 ) >"${worker_log}" 2>&1 &
 worker_pid=$!
 printf 'Worker PID: %s\n' "${worker_pid}"
@@ -172,5 +186,5 @@ printf 'Campaign response: %s\n' "${campaign_response}"
 campaign_id="$(printf '%s' "${campaign_response}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
 printf 'Campaign id: %s\n' "${campaign_id}"
 
-echo "Running Phase 1 smoke validation"
-bash "${repo_root}/scripts/smoke-topic-flow.sh"
+echo "Running Phase 2 smoke validation"
+MANUAL_TOPIC="${manual_topic}" bash "${repo_root}/scripts/smoke-topic-flow.sh"
