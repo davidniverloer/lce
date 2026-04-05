@@ -19,6 +19,7 @@ import {
 } from "@lce/shared-types";
 
 import { prisma } from "./db";
+import type { OutboxRelay } from "./outboxRelay";
 
 const getString = (value: unknown): string | null =>
   typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
@@ -188,11 +189,16 @@ const loadSitemap = async (sitemapUrl: string) => {
   return parseSitemapXml(xml);
 };
 
-export const createApp = () => {
+type CreateAppOptions = {
+  relay?: OutboxRelay;
+};
+
+export const createApp = (options: CreateAppOptions = {}) => {
   const app = express();
   const prismaExtended = prisma as typeof prisma & {
     marketAnalysisRequest: any;
     qualifiedTopic: any;
+    generationRun: any;
     generationTask: any;
     repositoryArticle: any;
     sitemapIngestion: any;
@@ -204,7 +210,17 @@ export const createApp = () => {
   app.use(express.json());
 
   app.get("/health", (_req, res) => {
-    res.json({ status: "ok" });
+    res.json({
+      status: "ok",
+      infra: {
+        relay: options.relay?.getStatus() ?? {
+          state: "disconnected",
+          retryDelayMs: 0,
+          retryAt: null,
+          connected: false,
+        },
+      },
+    });
   });
 
   app.get("/fixtures/sitemap.xml", (_req, res) => {
@@ -396,6 +412,29 @@ export const createApp = () => {
       res.json({
         organizationId,
         campaignId,
+        statusArtifact: analysisRequest
+          ? {
+              discovery: {
+                mode:
+                  analysisRequest.discoveredTopics?.[0]?.sourceMetadata?.mode ?? "seed_topic",
+                sources:
+                  analysisRequest.discoveredTopics?.flatMap(
+                    (candidate: any) => candidate?.sourceMetadata?.discoverySources ?? [],
+                  ) ?? [],
+              },
+              qualification: {
+                topicCount: topics.length,
+                fallbackCount: topics.reduce(
+                  (count: number, topic: any) =>
+                    count +
+                    Number(
+                      topic?.sourceMetadata?.status?.qualification?.fallbackCount ?? 0,
+                    ),
+                  0,
+                ),
+              },
+            }
+          : null,
         analysisRequest: analysisRequest
           ? {
               analysisRequestId: analysisRequest.id,
@@ -737,6 +776,451 @@ export const createApp = () => {
     }
   });
 
+  app.get("/campaigns/:campaignId/status-summary", async (req, res, next) => {
+    const organizationId = getString(req.query.organizationId);
+
+    if (!organizationId) {
+      res.status(400).json({ error: "organizationId is required" });
+      return;
+    }
+
+    try {
+      const tasks = await prismaExtended.generationTask.findMany({
+        where: {
+          organizationId,
+          campaignId: req.params.campaignId,
+        },
+        orderBy: {
+          createdAt: "desc",
+        },
+      });
+
+      const taskIds = tasks.map((task: any) => task.id);
+      const qualifiedTopicIds = tasks
+        .map((task: any) => task.qualifiedTopicId)
+        .filter((value: string | null | undefined): value is string => Boolean(value));
+
+      const [runs, qualifiedTopics, articles] = await Promise.all([
+        prismaExtended.generationRun.findMany({
+          where: {
+            taskId: { in: taskIds },
+          },
+        }),
+        prismaExtended.qualifiedTopic.findMany({
+          where: {
+            id: { in: qualifiedTopicIds },
+          },
+        }),
+        prismaExtended.repositoryArticle.findMany({
+          where: {
+            taskId: { in: taskIds },
+          },
+        }),
+      ]);
+
+      const runsByTaskId = new Map<string, any>(
+        runs.map((run: any) => [run.taskId, run]),
+      );
+      const qualifiedTopicsById = new Map<string, any>(
+        qualifiedTopics.map((topic: any) => [topic.id, topic]),
+      );
+      const articlesByTaskId = new Map<string, any>(
+        articles.map((article: any) => [article.taskId, article]),
+      );
+
+      res.json({
+        organizationId,
+        campaignId: req.params.campaignId,
+        summaries: tasks.map((task: any) => {
+          const run = runsByTaskId.get(task.id);
+          const runState = run?.stateJson as Record<string, any> | undefined;
+          const qualifiedTopic = task.qualifiedTopicId
+            ? qualifiedTopicsById.get(task.qualifiedTopicId)
+            : null;
+          const qualificationStatus =
+            (qualifiedTopic?.sourceMetadata as Record<string, any> | undefined)?.status ?? null;
+          const blueprint = task.blueprintJson as Record<string, any> | null;
+          const article = articlesByTaskId.get(task.id);
+          const generationStatus =
+            (runState?.statusArtifact as Record<string, any> | undefined) ?? null;
+          const discovery = qualificationStatus?.discovery ?? null;
+          const qualification = qualificationStatus?.qualification ?? null;
+
+          return {
+            taskId: task.id,
+            topic: task.topic,
+            taskStatus: task.status,
+            articleStatus: article?.status ?? null,
+            articleId: article?.id ?? null,
+            confidenceScore: qualification?.confidenceScore ?? null,
+            confidenceBand: qualification?.confidenceBand ?? null,
+            fallbackWeightShare: qualification?.fallbackWeightShare ?? null,
+            fallbackCount: qualification?.fallbackCount ?? null,
+            discoveryMode: discovery?.mode ?? null,
+            discoverySources: discovery?.sources ?? null,
+            differentiationReady: blueprint?.status?.differentiationReady ?? null,
+            sitemapUsed: blueprint?.status?.sitemapUsed ?? null,
+            siteAware: blueprint?.status?.siteAware ?? null,
+            qaStatus: generationStatus?.generation?.qaStatus ?? null,
+            qaPassed: generationStatus?.generation?.qaPassed ?? null,
+          };
+        }),
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/campaigns/:campaignId/status-trends", async (req, res, next) => {
+    const organizationId = getString(req.query.organizationId);
+
+    if (!organizationId) {
+      res.status(400).json({ error: "organizationId is required" });
+      return;
+    }
+
+    try {
+      const tasks = await prismaExtended.generationTask.findMany({
+        where: {
+          organizationId,
+          campaignId: req.params.campaignId,
+        },
+        orderBy: {
+          createdAt: "desc",
+        },
+      });
+
+      const taskIds = tasks.map((task: any) => task.id);
+      const qualifiedTopicIds = tasks
+        .map((task: any) => task.qualifiedTopicId)
+        .filter((value: string | null | undefined): value is string => Boolean(value));
+
+      const [runs, qualifiedTopics, articles] = await Promise.all([
+        prismaExtended.generationRun.findMany({
+          where: {
+            taskId: { in: taskIds },
+          },
+        }),
+        prismaExtended.qualifiedTopic.findMany({
+          where: {
+            id: { in: qualifiedTopicIds },
+          },
+        }),
+        prismaExtended.repositoryArticle.findMany({
+          where: {
+            taskId: { in: taskIds },
+          },
+        }),
+      ]);
+
+      const runsByTaskId = new Map<string, any>(
+        runs.map((run: any) => [run.taskId, run]),
+      );
+      const qualifiedTopicsById = new Map<string, any>(
+        qualifiedTopics.map((topic: any) => [topic.id, topic]),
+      );
+      const articlesByTaskId = new Map<string, any>(
+        articles.map((article: any) => [article.taskId, article]),
+      );
+
+      const taskStatusCounts: Record<string, number> = {};
+      const discoverySourceCounts = new Map<string, number>();
+      let confidenceScoreTotal = 0;
+      let confidenceScoreCount = 0;
+      let fallbackWeightShareTotal = 0;
+      let fallbackWeightShareCount = 0;
+      let articleCompletedCount = 0;
+      let differentiationReadyCount = 0;
+      let siteAwareCount = 0;
+      let qaPassCount = 0;
+
+      for (const task of tasks) {
+        taskStatusCounts[task.status] = (taskStatusCounts[task.status] ?? 0) + 1;
+
+        const run = runsByTaskId.get(task.id);
+        const runState = run?.stateJson as Record<string, any> | undefined;
+        const generationStatus =
+          (runState?.statusArtifact as Record<string, any> | undefined) ?? null;
+        const article = articlesByTaskId.get(task.id);
+        const blueprint = task.blueprintJson as Record<string, any> | null;
+        const qualifiedTopic = task.qualifiedTopicId
+          ? qualifiedTopicsById.get(task.qualifiedTopicId)
+          : null;
+        const qualificationStatus =
+          (qualifiedTopic?.sourceMetadata as Record<string, any> | undefined)?.status ?? null;
+        const discovery = qualificationStatus?.discovery ?? null;
+        const qualification = qualificationStatus?.qualification ?? null;
+        const discoverySources = Array.isArray(discovery?.sources) ? discovery.sources : [];
+
+        for (const source of discoverySources) {
+          if (typeof source !== "string" || source.length === 0) {
+            continue;
+          }
+
+          discoverySourceCounts.set(
+            source,
+            (discoverySourceCounts.get(source) ?? 0) + 1,
+          );
+        }
+
+        if (typeof qualification?.confidenceScore === "number") {
+          confidenceScoreTotal += qualification.confidenceScore;
+          confidenceScoreCount += 1;
+        }
+
+        if (typeof qualification?.fallbackWeightShare === "number") {
+          fallbackWeightShareTotal += qualification.fallbackWeightShare;
+          fallbackWeightShareCount += 1;
+        }
+
+        if (article?.status === "completed") {
+          articleCompletedCount += 1;
+        }
+
+        if (blueprint?.status?.differentiationReady === true) {
+          differentiationReadyCount += 1;
+        }
+
+        if (blueprint?.status?.siteAware === true) {
+          siteAwareCount += 1;
+        }
+
+        if (generationStatus?.generation?.qaPassed === true) {
+          qaPassCount += 1;
+        }
+      }
+
+      res.json({
+        organizationId,
+        campaignId: req.params.campaignId,
+        metrics: {
+          totalTasks: tasks.length,
+          taskStatusCounts,
+          articleCompletedCount,
+          averageConfidenceScore:
+            confidenceScoreCount > 0 ? confidenceScoreTotal / confidenceScoreCount : null,
+          averageFallbackWeightShare:
+            fallbackWeightShareCount > 0
+              ? fallbackWeightShareTotal / fallbackWeightShareCount
+              : null,
+          differentiationReadyCount,
+          siteAwareCount,
+          qaPassCount,
+          qaPassRate: tasks.length > 0 ? qaPassCount / tasks.length : null,
+          topDiscoverySources: Array.from(discoverySourceCounts.entries())
+            .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+            .slice(0, 5)
+            .map(([source, count]) => ({ source, count })),
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/campaigns/:campaignId/status-compare", async (req, res, next) => {
+    const organizationId = getString(req.query.organizationId);
+    const requestedWindow = Number.parseInt(String(req.query.window ?? "3"), 10);
+    const windowSize =
+      Number.isFinite(requestedWindow) && requestedWindow > 0 ? requestedWindow : 3;
+
+    if (!organizationId) {
+      res.status(400).json({ error: "organizationId is required" });
+      return;
+    }
+
+    try {
+      const tasks = await prismaExtended.generationTask.findMany({
+        where: {
+          organizationId,
+          campaignId: req.params.campaignId,
+        },
+        orderBy: {
+          createdAt: "desc",
+        },
+      });
+
+      const taskIds = tasks.map((task: any) => task.id);
+      const qualifiedTopicIds = tasks
+        .map((task: any) => task.qualifiedTopicId)
+        .filter((value: string | null | undefined): value is string => Boolean(value));
+
+      const [runs, qualifiedTopics, articles] = await Promise.all([
+        prismaExtended.generationRun.findMany({
+          where: {
+            taskId: { in: taskIds },
+          },
+        }),
+        prismaExtended.qualifiedTopic.findMany({
+          where: {
+            id: { in: qualifiedTopicIds },
+          },
+        }),
+        prismaExtended.repositoryArticle.findMany({
+          where: {
+            taskId: { in: taskIds },
+          },
+        }),
+      ]);
+
+      const runsByTaskId = new Map<string, any>(
+        runs.map((run: any) => [run.taskId, run]),
+      );
+      const qualifiedTopicsById = new Map<string, any>(
+        qualifiedTopics.map((topic: any) => [topic.id, topic]),
+      );
+      const articlesByTaskId = new Map<string, any>(
+        articles.map((article: any) => [article.taskId, article]),
+      );
+
+      const summaries = tasks.map((task: any) => {
+        const run = runsByTaskId.get(task.id);
+        const runState = run?.stateJson as Record<string, any> | undefined;
+        const qualifiedTopic = task.qualifiedTopicId
+          ? qualifiedTopicsById.get(task.qualifiedTopicId)
+          : null;
+        const qualificationStatus =
+          (qualifiedTopic?.sourceMetadata as Record<string, any> | undefined)?.status ?? null;
+        const blueprint = task.blueprintJson as Record<string, any> | null;
+        const article = articlesByTaskId.get(task.id);
+        const generationStatus =
+          (runState?.statusArtifact as Record<string, any> | undefined) ?? null;
+        const discovery = qualificationStatus?.discovery ?? null;
+        const qualification = qualificationStatus?.qualification ?? null;
+
+        return {
+          confidenceScore:
+            typeof qualification?.confidenceScore === "number"
+              ? qualification.confidenceScore
+              : null,
+          fallbackWeightShare:
+            typeof qualification?.fallbackWeightShare === "number"
+              ? qualification.fallbackWeightShare
+              : null,
+          differentiationReady: blueprint?.status?.differentiationReady === true,
+          siteAware: blueprint?.status?.siteAware === true,
+          qaPassed: generationStatus?.generation?.qaPassed === true,
+          discoverySources: Array.isArray(discovery?.sources)
+            ? discovery.sources.filter((source: unknown): source is string => typeof source === "string")
+            : [],
+          articleCompleted: article?.status === "completed",
+        };
+      });
+
+      const latestWindow = summaries.slice(0, windowSize);
+      const previousWindow = summaries.slice(windowSize, windowSize * 2);
+
+      const aggregateWindow = (items: typeof summaries) => {
+        const discoverySourceCounts = new Map<string, number>();
+        let confidenceTotal = 0;
+        let confidenceCount = 0;
+        let fallbackTotal = 0;
+        let fallbackCount = 0;
+        let differentiationReadyCount = 0;
+        let siteAwareCount = 0;
+        let qaPassCount = 0;
+        let articleCompletedCount = 0;
+
+        for (const item of items) {
+          if (typeof item.confidenceScore === "number") {
+            confidenceTotal += item.confidenceScore;
+            confidenceCount += 1;
+          }
+
+          if (typeof item.fallbackWeightShare === "number") {
+            fallbackTotal += item.fallbackWeightShare;
+            fallbackCount += 1;
+          }
+
+          if (item.differentiationReady) {
+            differentiationReadyCount += 1;
+          }
+
+          if (item.siteAware) {
+            siteAwareCount += 1;
+          }
+
+          if (item.qaPassed) {
+            qaPassCount += 1;
+          }
+
+          if (item.articleCompleted) {
+            articleCompletedCount += 1;
+          }
+
+          for (const source of item.discoverySources) {
+            discoverySourceCounts.set(
+              source,
+              (discoverySourceCounts.get(source) ?? 0) + 1,
+            );
+          }
+        }
+
+        return {
+          taskCount: items.length,
+          articleCompletedCount,
+          averageConfidenceScore:
+            confidenceCount > 0 ? confidenceTotal / confidenceCount : null,
+          averageFallbackWeightShare:
+            fallbackCount > 0 ? fallbackTotal / fallbackCount : null,
+          differentiationReadyRate:
+            items.length > 0 ? differentiationReadyCount / items.length : null,
+          siteAwareRate: items.length > 0 ? siteAwareCount / items.length : null,
+          qaPassRate: items.length > 0 ? qaPassCount / items.length : null,
+          topDiscoverySources: Array.from(discoverySourceCounts.entries())
+            .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+            .slice(0, 5)
+            .map(([source, count]) => ({ source, count })),
+        };
+      };
+
+      const latest = aggregateWindow(latestWindow);
+      const previous = aggregateWindow(previousWindow);
+
+      res.json({
+        organizationId,
+        campaignId: req.params.campaignId,
+        windowSize,
+        latest,
+        previous,
+        delta: {
+          averageConfidenceScoreChange:
+            latest.averageConfidenceScore !== null && previous.averageConfidenceScore !== null
+              ? latest.averageConfidenceScore - previous.averageConfidenceScore
+              : null,
+          averageFallbackWeightShareChange:
+            latest.averageFallbackWeightShare !== null &&
+            previous.averageFallbackWeightShare !== null
+              ? latest.averageFallbackWeightShare - previous.averageFallbackWeightShare
+              : null,
+          qaPassRateChange:
+            latest.qaPassRate !== null && previous.qaPassRate !== null
+              ? latest.qaPassRate - previous.qaPassRate
+              : null,
+          differentiationReadyRateChange:
+            latest.differentiationReadyRate !== null &&
+            previous.differentiationReadyRate !== null
+              ? latest.differentiationReadyRate - previous.differentiationReadyRate
+              : null,
+          siteAwareRateChange:
+            latest.siteAwareRate !== null && previous.siteAwareRate !== null
+              ? latest.siteAwareRate - previous.siteAwareRate
+              : null,
+          discoverySourceCountChange: latest.topDiscoverySources.map(({ source, count }) => {
+            const previousCount =
+              previous.topDiscoverySources.find((item) => item.source === source)?.count ?? 0;
+            return {
+              source,
+              countChange: count - previousCount,
+            };
+          }),
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.post("/tasks/generate", async (req, res, next) => {
     const organizationId = getString(req.body?.organizationId);
     const campaignId = getString(req.body?.campaignId);
@@ -854,6 +1338,71 @@ export const createApp = () => {
               id: article.id,
               title: article.title,
               status: article.status,
+            }
+          : null,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/tasks/:taskId/status", async (req, res, next) => {
+    try {
+      const task = await prismaExtended.generationTask.findUnique({
+        where: { id: req.params.taskId },
+      });
+
+      if (!task) {
+        res.status(404).json({ error: "task not found" });
+        return;
+      }
+
+      const [run, qualifiedTopic, article] = await Promise.all([
+        prismaExtended.generationRun.findUnique({
+          where: { taskId: task.id },
+        }),
+        task.qualifiedTopicId
+          ? prismaExtended.qualifiedTopic.findUnique({
+              where: { id: task.qualifiedTopicId },
+            })
+          : Promise.resolve(null),
+        prismaExtended.repositoryArticle.findUnique({
+          where: { taskId: task.id },
+        }),
+      ]);
+
+      const blueprint = task.blueprintJson as Record<string, any> | null;
+      const runState = run?.stateJson as Record<string, any> | undefined;
+      const qualificationStatus =
+        (qualifiedTopic?.sourceMetadata as Record<string, any> | undefined)?.status ?? null;
+      const generationStatus =
+        (runState?.statusArtifact as Record<string, any> | undefined) ?? null;
+
+      res.json({
+        taskId: task.id,
+        topic: task.topic,
+        status: task.status,
+        statusArtifact: {
+          discovery: qualificationStatus?.discovery ?? null,
+          qualification: qualificationStatus?.qualification ?? null,
+          blueprint: blueprint?.status ?? null,
+          generation: generationStatus?.generation ?? null,
+          qa: generationStatus?.qa ?? null,
+          infra: {
+            relay: options.relay?.getStatus() ?? {
+              state: "disconnected",
+              retryDelayMs: 0,
+              retryAt: null,
+              connected: false,
+            },
+          },
+        },
+        blueprintId: task.blueprintId,
+        article: article
+          ? {
+              id: article.id,
+              status: article.status,
+              title: article.title,
             }
           : null,
       });

@@ -238,6 +238,51 @@ PYTHONPATH=$PWD/workers/ai-engine/src workers/ai-engine/.venv/bin/python -m pyte
   workers/ai-engine/tests/test_market_scoring_pipeline.py
 ```
 
+## Phase 3.5 quality surfaces
+
+Phase 3.5 adds richer internal artifacts without changing the orchestration contract:
+
+- discovery metadata now records:
+  - `discoverySources`
+  - `sourceConfidence`
+  - source-family samples and hints
+- blueprint artifacts now include:
+  - `differentiationAngle`
+  - `differentiationRationale`
+  - `targetDelta`
+  - `audienceShift`
+  - `siteContext`
+- qualification metadata now includes:
+  - confidence markers
+  - fallback influence
+  - a structured `status` artifact
+- generation run state now includes structured QA results and a persisted `statusArtifact`
+
+Inspect the unified task status surface with:
+
+```bash
+curl -s http://localhost:3000/tasks/<task-id>/status | jq
+```
+
+This additive endpoint summarizes:
+- discovery and qualification status
+- blueprint readiness and differentiation presence
+- generation / QA outcomes
+- relay health as exposed by the orchestrator
+
+Validate these Phase 3.5 artifacts end to end with the deterministic integration harness:
+
+```bash
+bash scripts/validate-phase35-artifacts.sh
+```
+
+This reuses the existing pipeline shape and asserts:
+- discovery source attribution
+- fallback / confidence markers
+- blueprint differentiation and site context
+- structured QA artifact survival
+- `GET /tasks/:taskId/status` programmatic inspectability
+
 ## Manual API flow
 
 Create an organization:

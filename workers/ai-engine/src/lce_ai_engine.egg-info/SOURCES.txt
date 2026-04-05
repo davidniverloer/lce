@@ -19,3 +19,4 @@ src/lce_ai_engine.egg-info/top_level.txt
 tests/test_dataforseo_adapter.py
 tests/test_market_modes.py
 tests/test_market_scoring_pipeline.py
+tests/test_phase35_enrichment.py

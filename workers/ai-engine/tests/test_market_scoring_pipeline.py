@@ -98,7 +98,12 @@ def test_market_scoring_calibration_metadata_is_explainable() -> None:
     assert calibration["qualificationStatus"] == "qualified"
     assert calibration["liveSignalCount"] == 2
     assert calibration["stubSignalCount"] == 1
+    assert calibration["confidenceBand"] == "high"
+    assert calibration["confidenceScore"] == 0.94
+    assert calibration["fallbackWeightShare"] == 0.0
     assert candidate.source_metadata["weightedScore"] == 81.0
+    assert candidate.source_metadata["status"]["qualification"]["confidenceBand"] == "high"
+    assert candidate.source_metadata["status"]["qualification"]["fallbackCount"] == 0
 
 
 def test_novelty_reranking_uses_configured_thresholds(monkeypatch) -> None:
@@ -111,11 +116,15 @@ def test_novelty_reranking_uses_configured_thresholds(monkeypatch) -> None:
             seo_score=90.0,
             total_score=81.0,
             qualification_note="Qualified candidate.",
-            source_metadata={
-                "weightedScore": 81.0,
-                "calibration": {"weights": {"trend": 0.3, "social": 0.2, "seo": 0.5}},
-            },
-        ),
+                source_metadata={
+                    "weightedScore": 81.0,
+                    "calibration": {
+                        "weights": {"trend": 0.3, "social": 0.2, "seo": 0.5},
+                        "confidenceScore": 0.82,
+                        "confidenceBand": "medium",
+                    },
+                },
+            ),
         QualifiedTopicCandidate(
             topic="remote patient monitoring reimbursement",
             trend_score=70.0,
@@ -123,11 +132,15 @@ def test_novelty_reranking_uses_configured_thresholds(monkeypatch) -> None:
             seo_score=76.0,
             total_score=70.4,
             qualification_note="Qualified candidate.",
-            source_metadata={
-                "weightedScore": 70.4,
-                "calibration": {"weights": {"trend": 0.3, "social": 0.2, "seo": 0.5}},
-            },
-        ),
+                source_metadata={
+                    "weightedScore": 70.4,
+                    "calibration": {
+                        "weights": {"trend": 0.3, "social": 0.2, "seo": 0.5},
+                        "confidenceScore": 0.82,
+                        "confidenceBand": "medium",
+                    },
+                },
+            ),
     ]
 
     monkeypatch.setattr(
@@ -153,3 +166,4 @@ def test_novelty_reranking_uses_configured_thresholds(monkeypatch) -> None:
     assert reranked[0].source_metadata["novelty"]["maxPenalty"] == 25.0
     assert reranked[0].source_metadata["adjustedScore"] <= reranked[0].source_metadata["rawWeightedScore"]
     assert reranked[0].source_metadata["selectionValidation"]["adjustedScore"] == reranked[0].total_score
+    assert reranked[0].source_metadata["selectionValidation"]["confidenceBand"] is not None

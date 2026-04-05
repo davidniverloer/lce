@@ -45,6 +45,7 @@ class ArticleGenerationState(FlowState):
     current_body: str | None = None
     qa_passed: bool = False
     qa_feedback: str | None = None
+    qa_review: dict | None = None
     completed_article_id: str | None = None
 
 
@@ -73,6 +74,31 @@ def _hydrate_blueprint(raw_blueprint: dict | None) -> BlueprintOutput | None:
             title=str(item["title"]),
             anchor_text=str(item["anchorText"]),
             rationale=str(item["rationale"]),
+            page_summary=(
+                str(item["pageSummary"])
+                if item.get("pageSummary") is not None
+                else None
+            ),
+            page_role=(
+                str(item["pageRole"])
+                if item.get("pageRole") is not None
+                else None
+            ),
+            topic_cluster=(
+                str(item["topicCluster"])
+                if item.get("topicCluster") is not None
+                else None
+            ),
+            relevance_score=(
+                float(item["relevanceScore"])
+                if item.get("relevanceScore") is not None
+                else None
+            ),
+            placement_hint=(
+                str(item["placementHint"])
+                if item.get("placementHint") is not None
+                else None
+            ),
         )
         for item in raw_blueprint.get("internalLinks", [])
         if isinstance(item, dict)
@@ -99,6 +125,26 @@ def _hydrate_blueprint(raw_blueprint: dict | None) -> BlueprintOutput | None:
         sections=[str(item) for item in raw_blueprint.get("sections", [])],
         style_guidance=str(raw_blueprint["styleGuidance"]),
         internal_links=internal_links,
+        differentiation_angle=str(
+            raw_blueprint.get("differentiationAngle") or "Practical operational differentiation."
+        ),
+        differentiation_rationale=str(
+            raw_blueprint.get("differentiationRationale")
+            or "Provides a clearer operational lens than nearby content."
+        ),
+        target_delta=str(
+            raw_blueprint.get("targetDelta") or "Add concrete implementation guidance."
+        ),
+        audience_shift=(
+            str(raw_blueprint["audienceShift"])
+            if raw_blueprint.get("audienceShift") is not None
+            else None
+        ),
+        site_context=(
+            dict(raw_blueprint.get("siteContext"))
+            if isinstance(raw_blueprint.get("siteContext"), dict)
+            else {}
+        ),
     )
 
 
@@ -261,6 +307,13 @@ class ArticleGenerationFlow(Flow[ArticleGenerationState]):
         )
         self.state.qa_passed = review.passed
         self.state.qa_feedback = review.feedback
+        self.state.qa_review = {
+            "passed": review.passed,
+            "feedback": review.feedback,
+            "issues": review.issues,
+            "revisionInstructions": review.revision_instructions,
+            "rubric": review.rubric,
+        }
         self.state.status = "approved" if review.passed else "revision_requested"
 
         self._session.add(
@@ -287,4 +340,31 @@ class ArticleGenerationFlow(Flow[ArticleGenerationState]):
         run.state_json = self._state_payload()
 
     def _state_payload(self) -> dict:
-        return json.loads(self.state.model_dump_json())
+        payload = json.loads(self.state.model_dump_json())
+        blueprint = self.state.blueprint or {}
+        qa_review = payload.get("qa_review") or {}
+        payload["statusArtifact"] = {
+            "generation": {
+                "status": self.state.status,
+                "revisionNumber": self.state.revision_number,
+                "maxRevisionAttempts": self.state.max_revision_attempts,
+                "qaPassed": self.state.qa_passed,
+                "qaStatus": "pass" if self.state.qa_passed else "revision_requested",
+            },
+            "blueprint": {
+                "ready": bool(blueprint),
+                "differentiationReady": bool(
+                    blueprint.get("differentiationAngle")
+                    and blueprint.get("differentiationRationale")
+                    and blueprint.get("targetDelta")
+                ),
+                "sitemapUsed": bool(blueprint.get("siteContext", {}).get("sitemapUsed"))
+                if isinstance(blueprint.get("siteContext"), dict)
+                else False,
+                "internalLinkCount": len(blueprint.get("internalLinks", []))
+                if isinstance(blueprint.get("internalLinks"), list)
+                else 0,
+            },
+            "qa": qa_review,
+        }
+        return payload

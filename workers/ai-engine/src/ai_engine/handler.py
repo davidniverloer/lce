@@ -523,6 +523,18 @@ def _apply_novelty_rules(
                     },
                     "rawWeightedScore": candidate.total_score,
                     "adjustedScore": adjusted_score,
+                    "fallbackInfluence": {
+                        "fallbackWeightShare": (
+                            candidate.source_metadata.get("calibration", {}).get("fallbackWeightShare")
+                            if isinstance(candidate.source_metadata.get("calibration"), dict)
+                            else None
+                        ),
+                        "providerModes": (
+                            candidate.source_metadata.get("calibration", {}).get("providerModes")
+                            if isinstance(candidate.source_metadata.get("calibration"), dict)
+                            else {}
+                        ),
+                    },
                 },
             )
         )
@@ -567,6 +579,16 @@ def _apply_novelty_rules(
                             else None
                         ),
                         "selected": index == 1,
+                        "confidenceScore": (
+                            candidate.source_metadata.get("calibration", {}).get("confidenceScore")
+                            if isinstance(candidate.source_metadata.get("calibration"), dict)
+                            else None
+                        ),
+                        "confidenceBand": (
+                            candidate.source_metadata.get("calibration", {}).get("confidenceBand")
+                            if isinstance(candidate.source_metadata.get("calibration"), dict)
+                            else None
+                        ),
                     },
                     "providerSources": [
                         metadata.get("provider")
@@ -583,6 +605,22 @@ def _apply_novelty_rules(
                         if isinstance(candidate.source_metadata.get("discovery"), dict)
                         else None
                     ),
+                    "status": {
+                        **(
+                            candidate.source_metadata.get("status")
+                            if isinstance(candidate.source_metadata.get("status"), dict)
+                            else {}
+                        ),
+                        "selection": {
+                            "rank": index,
+                            "selectedForBlueprint": index == 1,
+                            "scoreGapToNext": (
+                                round(candidate.total_score - next_score, 2)
+                                if next_score is not None
+                                else None
+                            ),
+                        },
+                    },
                 },
             )
         )
@@ -809,8 +847,26 @@ def _ensure_blueprint(
         )
 
     internal_links = []
+    site_context: dict[str, object] = {
+        "sitemapUsed": False,
+        "indexedPageCount": 0,
+        "coverageTopics": [],
+        "coverageGaps": [],
+        "pages": [],
+        "linkingGuidance": "No sitemap was provided, so internal linking guidance is intentionally minimal.",
+    }
     if indexed_pages:
         sitemap_agent = SitemapIngestorAgent()
+        site_context = sitemap_agent.build_site_context(
+            topic=qualified_topic.topic,
+            indexed_pages=[
+                {
+                    "url": page.url,
+                    "title": page.title,
+                }
+                for page in indexed_pages
+            ],
+        )
         internal_links = sitemap_agent.derive_internal_links(
             topic=qualified_topic.topic,
             indexed_pages=[
@@ -828,6 +884,8 @@ def _ensure_blueprint(
         content_language=content_language,
         geo_context=geo_context,
         internal_links=internal_links,
+        qualification_metadata=qualified_topic.source_metadata,
+        site_context=site_context,
     )
 
     blueprint_id = str(uuid.uuid4())
@@ -839,12 +897,33 @@ def _ensure_blueprint(
         "angle": blueprint.angle,
         "sections": blueprint.sections,
         "styleGuidance": blueprint.style_guidance,
+        "differentiationAngle": blueprint.differentiation_angle,
+        "differentiationRationale": blueprint.differentiation_rationale,
+        "targetDelta": blueprint.target_delta,
+        "audienceShift": blueprint.audience_shift,
+        "siteContext": blueprint.site_context,
+        "status": {
+            "blueprintReady": True,
+            "differentiationReady": bool(
+                blueprint.differentiation_angle
+                and blueprint.differentiation_rationale
+                and blueprint.target_delta
+            ),
+            "sitemapUsed": bool(indexed_pages),
+            "internalLinkCount": len(blueprint.internal_links),
+            "siteAware": bool(blueprint.site_context.get("pages")),
+        },
         "internalLinks": [
             {
                 "url": link.url,
                 "title": link.title,
                 "anchorText": link.anchor_text,
                 "rationale": link.rationale,
+                "pageSummary": link.page_summary,
+                "pageRole": link.page_role,
+                "topicCluster": link.topic_cluster,
+                "relevanceScore": link.relevance_score,
+                "placementHint": link.placement_hint,
             }
             for link in blueprint.internal_links
         ],

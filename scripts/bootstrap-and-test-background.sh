@@ -19,6 +19,8 @@ geo_context="${GEO_CONTEXT:-}"
 docker_compose_file="${repo_root}/infra/docker/docker-compose.yml"
 orchestrator_log="${logs_dir}/orchestrator.log"
 worker_log="${logs_dir}/ai-engine.log"
+post_smoke_script="${POST_SMOKE_SCRIPT:-}"
+smoke_output_path="${SMOKE_OUTPUT_PATH:-}"
 
 orchestrator_pid=""
 worker_pid=""
@@ -28,6 +30,41 @@ require_command() {
     echo "Missing required command: $1" >&2
     exit 1
   fi
+}
+
+source_env_defaults() {
+  local env_file="$1"
+  local env_line=""
+  local env_key=""
+  local -a preserved_keys=()
+  local -a preserved_values=()
+  local preserved_index=0
+
+  while IFS= read -r env_line || [ -n "${env_line}" ]; do
+    case "${env_line}" in
+      ''|\#*)
+        continue
+        ;;
+    esac
+
+    env_key="${env_line%%=*}"
+    env_key="${env_key#export }"
+    env_key="${env_key%%[[:space:]]*}"
+
+    if [ -n "${env_key}" ] && [ -n "${!env_key+x}" ]; then
+      preserved_keys[${preserved_index}]="${env_key}"
+      preserved_values[${preserved_index}]="${!env_key}"
+      preserved_index=$((preserved_index + 1))
+    fi
+  done < "${env_file}"
+
+  set -a
+  source "${env_file}"
+  set +a
+
+  for preserved_index in "${!preserved_keys[@]}"; do
+    export "${preserved_keys[${preserved_index}]}=${preserved_values[${preserved_index}]}"
+  done
 }
 
 resolve_python_bin() {
@@ -93,7 +130,12 @@ wait_for_health() {
 
   for attempt in $(seq 1 "${attempts}"); do
     if response="$(curl -sS "${base_url}/health" 2>/dev/null)"; then
-      if [ "${response}" = '{"status":"ok"}' ]; then
+      if printf '%s' "${response}" | python3 -c 'import json,sys
+try:
+    data=json.load(sys.stdin)
+    print("ok" if data.get("status") == "ok" else "not-ok")
+except Exception:
+    print("not-ok")' | grep -qx "ok"; then
         printf 'Health response: %s\n' "${response}"
         return 0
       fi
@@ -156,23 +198,30 @@ else
   echo ".env already exists, leaving it unchanged"
 fi
 
-set -a
-source "${repo_root}/.env"
-set +a
+source_env_defaults "${repo_root}/.env"
 
 RABBITMQ_GENERATION_QUEUE="${RABBITMQ_GENERATION_QUEUE:-${RABBITMQ_TOPIC_GENERATION_QUEUE:-content.generation-requests}}"
 export RABBITMQ_GENERATION_QUEUE
 
-echo "Installing Node dependencies"
-CI=true pnpm install
+if [ -d "${repo_root}/node_modules" ]; then
+  echo "Node dependencies already installed, skipping pnpm install"
+else
+  echo "Installing Node dependencies"
+  CI=true pnpm install
+fi
 
 if [ ! -d "${venv_dir}" ]; then
   echo "Creating Python virtual environment"
   "${python_bin}" -m venv "${venv_dir}"
 fi
 
-echo "Installing Python worker dependencies"
-"${venv_dir}/bin/pip" install -e "${worker_dir}"
+if [ -x "${venv_dir}/bin/python" ] && \
+   PYTHONPATH="${worker_dir}/src" "${venv_dir}/bin/python" -c "import ai_engine" >/dev/null 2>&1; then
+  echo "Python worker dependencies already installed, skipping pip install"
+else
+  echo "Installing Python worker dependencies"
+  "${venv_dir}/bin/pip" install -e "${worker_dir}"
+fi
 
 echo "Generating Prisma client"
 pnpm db:generate
@@ -226,4 +275,9 @@ campaign_id="$(printf '%s' "${campaign_response}" | python3 -c 'import json,sys;
 printf 'Campaign id: %s\n' "${campaign_id}"
 
 echo "Running Phase 3 smoke validation"
-SEED_TOPIC="${seed_topic}" MARKET_INDUSTRY="${market_industry}" CONTENT_LANGUAGE="${content_language}" GEO_CONTEXT="${geo_context}" bash "${repo_root}/scripts/smoke-topic-flow.sh"
+SMOKE_OUTPUT_PATH="${smoke_output_path}" SEED_TOPIC="${seed_topic}" MARKET_INDUSTRY="${market_industry}" CONTENT_LANGUAGE="${content_language}" GEO_CONTEXT="${geo_context}" bash "${repo_root}/scripts/smoke-topic-flow.sh"
+
+if [ -n "${post_smoke_script}" ]; then
+  echo "Running post-smoke validation"
+  SMOKE_OUTPUT_PATH="${smoke_output_path}" PHASE35_INPUT_PATH="${smoke_output_path}" /bin/zsh -lc "${post_smoke_script}"
+fi

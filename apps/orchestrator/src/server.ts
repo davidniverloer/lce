@@ -5,9 +5,9 @@ import { config } from "./config";
 import { prisma } from "./db";
 import { OutboxRelay } from "./outboxRelay";
 
-const app = createApp();
-const server = createServer(app);
 const relay = new OutboxRelay(prisma);
+const app = createApp({ relay });
+const server = createServer(app);
 
 server.listen(config.port, () => {
   console.log(`Orchestrator listening on http://localhost:${config.port}`);

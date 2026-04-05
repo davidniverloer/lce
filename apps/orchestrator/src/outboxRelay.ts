@@ -107,6 +107,22 @@ export class OutboxRelay {
     }
   }
 
+  getStatus(): {
+    state: "ready" | "retrying" | "disconnected";
+    retryDelayMs: number;
+    retryAt: number | null;
+    connected: boolean;
+  } {
+    const connected = Boolean(this.channel && this.connection);
+    const retrying = Date.now() < this.brokerRetryAt;
+    return {
+      state: connected ? "ready" : retrying ? "retrying" : "disconnected",
+      retryDelayMs: this.brokerRetryDelayMs,
+      retryAt: this.brokerRetryAt > 0 ? this.brokerRetryAt : null,
+      connected,
+    };
+  }
+
   private async ensureBroker(): Promise<void> {
     if (this.channel) {
       return;

@@ -13,6 +13,7 @@ max_attempts="${MAX_ATTEMPTS:-25}"
 poll_interval_seconds="${POLL_INTERVAL_SECONDS:-2}"
 sitemap_url="${SITEMAP_URL:-fixture://default-sitemap}"
 skip_sitemap="${SKIP_SITEMAP:-0}"
+smoke_output_path="${SMOKE_OUTPUT_PATH:-}"
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -125,14 +126,48 @@ for attempt in $(seq 1 "${max_attempts}"); do
      [ -n "${task_id:-}" ] && \
      [ "${task_status:-}" = "completed" ]; then
     task_response="$(curl -sS "${base_url}/tasks/${task_id}")"
+    task_status_response="$(curl -sS "${base_url}/tasks/${task_id}/status")"
+    campaign_status_summary_response="$(curl -sS "${base_url}/campaigns/${campaign_id}/status-summary?organizationId=${organization_id}")"
+    campaign_status_trends_response="$(curl -sS "${base_url}/campaigns/${campaign_id}/status-trends?organizationId=${organization_id}")"
+    campaign_status_compare_response="$(curl -sS "${base_url}/campaigns/${campaign_id}/status-compare?organizationId=${organization_id}&window=1")"
     printf 'Qualified topics response: %s\n' "${qualified_topics_response}"
     printf 'Indexed pages response: %s\n' "${indexed_pages_response}"
     printf 'Blueprints response: %s\n' "${blueprints_response}"
     printf 'Campaign tasks response: %s\n' "${tasks_response}"
     printf 'Task response: %s\n' "${task_response}"
+    printf 'Task status response: %s\n' "${task_status_response}"
+    printf 'Campaign status summary response: %s\n' "${campaign_status_summary_response}"
+    printf 'Campaign status trends response: %s\n' "${campaign_status_trends_response}"
+    printf 'Campaign status compare response: %s\n' "${campaign_status_compare_response}"
     printf 'Qualified topics stored: %s\n' "${qualified_topic_count}"
     printf 'Indexed pages stored: %s\n' "${indexed_page_count}"
     printf 'Blueprints stored: %s\n' "${blueprint_count}"
+    if [ -n "${smoke_output_path}" ]; then
+      python3 - "${smoke_output_path}" "${organization_id}" "${campaign_id}" "${analysis_request_id}" "${sitemap_ingestion_id}" "${task_id}" "${qualified_topics_response}" "${indexed_pages_response}" "${blueprints_response}" "${tasks_response}" "${task_response}" "${task_status_response}" "${campaign_status_summary_response}" "${campaign_status_trends_response}" "${campaign_status_compare_response}" <<'PY'
+import json
+import sys
+
+output_path = sys.argv[1]
+payload = {
+    "organizationId": sys.argv[2],
+    "campaignId": sys.argv[3],
+    "analysisRequestId": sys.argv[4],
+    "sitemapIngestionId": sys.argv[5] or None,
+    "taskId": sys.argv[6],
+    "qualifiedTopicsResponse": json.loads(sys.argv[7]),
+    "indexedPagesResponse": json.loads(sys.argv[8]),
+    "blueprintsResponse": json.loads(sys.argv[9]),
+    "tasksResponse": json.loads(sys.argv[10]),
+    "taskResponse": json.loads(sys.argv[11]),
+    "taskStatusResponse": json.loads(sys.argv[12]),
+    "campaignStatusSummaryResponse": json.loads(sys.argv[13]),
+    "campaignStatusTrendsResponse": json.loads(sys.argv[14]),
+    "campaignStatusCompareResponse": json.loads(sys.argv[15]),
+}
+with open(output_path, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle)
+PY
+    fi
     echo "Smoke test passed."
     exit 0
   fi

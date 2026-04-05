@@ -79,6 +79,21 @@ class StubLLMProvider:
                 if isinstance(blueprint, dict) and blueprint.get("style_guidance")
                 else "Use clear, neutral, reviewable language."
             )
+            differentiation_angle = (
+                str(blueprint.get("differentiation_angle"))
+                if isinstance(blueprint, dict) and blueprint.get("differentiation_angle")
+                else "Focus on practical operational execution."
+            )
+            differentiation_rationale = (
+                str(blueprint.get("differentiation_rationale"))
+                if isinstance(blueprint, dict) and blueprint.get("differentiation_rationale")
+                else "Provide an operations-first lens instead of generic thought leadership."
+            )
+            target_delta = (
+                str(blueprint.get("target_delta"))
+                if isinstance(blueprint, dict) and blueprint.get("target_delta")
+                else "Add concrete implementation steps and internal references."
+            )
             internal_links = (
                 blueprint.get("internal_links")
                 if isinstance(blueprint, dict) and isinstance(blueprint.get("internal_links"), list)
@@ -96,6 +111,9 @@ class StubLLMProvider:
                 ),
                 "",
                 f"{topic} matters because teams need a reliable, easy-to-review starting point.",
+                f"Differentiation Angle: {differentiation_angle}",
+                f"Differentiation Rationale: {differentiation_rationale}",
+                f"Target Delta: {target_delta}",
                 (
                     f"This draft explains the main idea, the expected outcome, and a simple action plan for teams operating in {location}."
                     if location
@@ -191,6 +209,20 @@ class StubLLMProvider:
                         f"Write in {language} using concise, reviewable language with explicit operational recommendations "
                         "and natural internal-link callouts."
                     ),
+                    "differentiation_angle": (
+                        f"Take an operator-focused angle on {topic} for {audience.lower()}."
+                    ),
+                    "differentiation_rationale": (
+                        "Position the article as a practical execution guide rather than a generic market overview."
+                    ),
+                    "target_delta": (
+                        "Add actionable workflow guidance, explicit audience fit, and site-aware internal references."
+                    ),
+                    "audience_shift": (
+                        f"Emphasize implementation concerns for {audience.lower()}."
+                        if audience.lower() != "general audience"
+                        else None
+                    ),
                 }
             )
 
@@ -199,48 +231,80 @@ class StubLLMProvider:
             content_language = payload.get("content_language")
             geo_context = payload.get("geo_context")
             expected_sections = payload.get("expected_sections") or []
+            expected_differentiation_angle = payload.get("expected_differentiation_angle")
+            expected_target_delta = payload.get("expected_target_delta")
+            expected_links = payload.get("expected_links") or []
+
+            issues: list[dict[str, str]] = []
+            revision_instructions: list[str] = []
+            rubric = {
+                "structureCompleteness": "pass",
+                "blueprintFidelity": "pass",
+                "differentiationAdherence": "pass",
+                "audienceLanguageGeoFit": "pass",
+                "internalLinkingQuality": "pass",
+                "clarityAndCoherence": "pass",
+            }
 
             if "## Compliance Checklist" not in body:
-                return response_model.model_validate(
+                issues.append(
                     {
-                        "passed": False,
-                        "feedback": (
-                            "Add a compliance checklist section and state how the draft satisfies it."
-                        ),
+                        "category": "structure",
+                        "severity": "high",
+                        "message": "Missing compliance checklist section.",
+                        "revisionHint": "Add a compliance checklist section near the end of the article.",
                     }
                 )
+                revision_instructions.append(
+                    "Add a compliance checklist section and state how the draft satisfies it."
+                )
+                rubric["structureCompleteness"] = "fail"
 
             if "Audience:" not in body:
-                return response_model.model_validate(
+                issues.append(
                     {
-                        "passed": False,
-                        "feedback": "State the target audience explicitly in the article body.",
+                        "category": "audience_fit",
+                        "severity": "high",
+                        "message": "The draft does not state the target audience explicitly.",
+                        "revisionHint": "Add an Audience line near the top of the draft.",
                     }
                 )
+                revision_instructions.append(
+                    "State the target audience explicitly in the article body."
+                )
+                rubric["audienceLanguageGeoFit"] = "fail"
 
             if isinstance(content_language, str) and content_language.strip():
                 expected_language_line = f"Language: {content_language.strip()}"
                 if expected_language_line not in body:
-                    return response_model.model_validate(
+                    issues.append(
                         {
-                            "passed": False,
-                            "feedback": (
-                                f"State that the article is written in {content_language.strip()} and align the draft to that language."
-                            ),
+                            "category": "language_fit",
+                            "severity": "medium",
+                            "message": "The requested language is not reflected explicitly in the draft.",
+                            "revisionHint": f"Reflect {content_language.strip()} explicitly and align the draft to that language.",
                         }
                     )
+                    revision_instructions.append(
+                        f"State that the article is written in {content_language.strip()} and align the draft to that language."
+                    )
+                    rubric["audienceLanguageGeoFit"] = "fail"
 
             if isinstance(geo_context, str) and geo_context.strip():
                 expected_geo_line = f"Geographic Context: {geo_context.strip()}"
                 if expected_geo_line not in body:
-                    return response_model.model_validate(
+                    issues.append(
                         {
-                            "passed": False,
-                            "feedback": (
-                                f"Reflect the geographic context for {geo_context.strip()} explicitly in the draft."
-                            ),
+                            "category": "geo_fit",
+                            "severity": "medium",
+                            "message": "The geographic context is missing from the draft.",
+                            "revisionHint": f"Reflect the geographic context for {geo_context.strip()} explicitly.",
                         }
                     )
+                    revision_instructions.append(
+                        f"Reflect the geographic context for {geo_context.strip()} explicitly in the draft."
+                    )
+                    rubric["audienceLanguageGeoFit"] = "fail"
 
             if isinstance(expected_sections, list):
                 missing_section = next(
@@ -252,19 +316,82 @@ class StubLLMProvider:
                     None,
                 )
                 if missing_section:
-                    return response_model.model_validate(
+                    issues.append(
                         {
-                            "passed": False,
-                            "feedback": (
-                                f"Add the planned section '{missing_section}' so the draft follows the approved blueprint."
-                            ),
+                            "category": "blueprint_fidelity",
+                            "severity": "high",
+                            "message": f"Missing planned blueprint section '{missing_section}'.",
+                            "revisionHint": f"Add the section '{missing_section}' and align it with the approved blueprint.",
                         }
                     )
+                    revision_instructions.append(
+                        f"Add the planned section '{missing_section}' so the draft follows the approved blueprint."
+                    )
+                    rubric["structureCompleteness"] = "fail"
+                    rubric["blueprintFidelity"] = "fail"
+
+            if isinstance(expected_differentiation_angle, str) and expected_differentiation_angle.strip():
+                if "Differentiation Angle:" not in body:
+                    issues.append(
+                        {
+                            "category": "differentiation",
+                            "severity": "high",
+                            "message": "The approved differentiation angle is not surfaced in the draft.",
+                            "revisionHint": "State and execute the differentiation angle explicitly in the introduction.",
+                        }
+                    )
+                    revision_instructions.append(
+                        "State and execute the differentiation angle explicitly in the introduction."
+                    )
+                    rubric["differentiationAdherence"] = "fail"
+
+            if isinstance(expected_target_delta, str) and expected_target_delta.strip():
+                if "Target Delta:" not in body:
+                    issues.append(
+                        {
+                            "category": "differentiation",
+                            "severity": "medium",
+                            "message": "The draft does not explain what new value it adds.",
+                            "revisionHint": "Add a clear target delta statement that explains the added value.",
+                        }
+                    )
+                    revision_instructions.append(
+                        "Add a clear target delta statement that explains the article's added value."
+                    )
+                    rubric["differentiationAdherence"] = "fail"
+
+            if isinstance(expected_links, list) and expected_links and "## Internal Link Opportunities" not in body:
+                issues.append(
+                    {
+                        "category": "internal_linking",
+                        "severity": "medium",
+                        "message": "The draft omits the internal-link guidance section.",
+                        "revisionHint": "Add internal link opportunities that use the blueprint guidance.",
+                    }
+                )
+                revision_instructions.append(
+                    "Add internal link opportunities that use the blueprint guidance."
+                )
+                rubric["internalLinkingQuality"] = "fail"
+
+            if issues:
+                return response_model.model_validate(
+                    {
+                        "passed": False,
+                        "feedback": "Revise the draft to address the blueprint, differentiation, and QA issues.",
+                        "issues": issues,
+                        "revision_instructions": revision_instructions,
+                        "rubric": rubric,
+                    }
+                )
 
             return response_model.model_validate(
                 {
                     "passed": True,
-                    "feedback": "Draft passes the minimum QA and compliance checks.",
+                    "feedback": "Draft passes the expanded QA and compliance checks.",
+                    "issues": [],
+                    "revision_instructions": [],
+                    "rubric": rubric,
                 }
             )
 

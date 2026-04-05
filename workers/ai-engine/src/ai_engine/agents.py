@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import hashlib
 import json
 import math
@@ -56,6 +57,11 @@ class InternalLinkSuggestion:
     title: str
     anchor_text: str
     rationale: str
+    page_summary: str | None = None
+    page_role: str | None = None
+    topic_cluster: str | None = None
+    relevance_score: float | None = None
+    placement_hint: str | None = None
 
 
 @dataclass(frozen=True)
@@ -68,6 +74,11 @@ class BlueprintOutput:
     sections: list[str]
     style_guidance: str
     internal_links: list[InternalLinkSuggestion]
+    differentiation_angle: str
+    differentiation_rationale: str
+    target_delta: str
+    audience_shift: str | None
+    site_context: dict[str, object]
 
 
 @dataclass(frozen=True)
@@ -80,6 +91,9 @@ class DraftOutput:
 class QaResult:
     passed: bool
     feedback: str
+    issues: list[dict[str, str]]
+    revision_instructions: list[str]
+    rubric: dict[str, object]
 
 
 class DraftResponse(BaseModel):
@@ -90,12 +104,19 @@ class DraftResponse(BaseModel):
 class QaResponse(BaseModel):
     passed: bool
     feedback: str
+    issues: list[dict[str, str]]
+    revision_instructions: list[str]
+    rubric: dict[str, object]
 
 
 class BlueprintResponse(BaseModel):
     angle: str
     sections: list[str]
     style_guidance: str
+    differentiation_angle: str
+    differentiation_rationale: str
+    target_delta: str
+    audience_shift: str | None = None
 
 
 def _bounded_score(key: str, minimum: int = 55, maximum: int = 95) -> float:
@@ -293,6 +314,66 @@ def _topic_variants_from_titles(titles: list[str], *, industry: str) -> list[str
         seen.add(lower)
         candidates.append(cleaned)
     return candidates[:5]
+
+
+def _reddit_titles(query: str, *, limit: int = 5) -> list[str]:
+    url = (
+        "https://www.reddit.com/search.json?q="
+        f"{quote(query)}&sort=top&t=month&limit={limit}"
+    )
+    payload = json.loads(_fetch_text(url, accept="application/json"))
+    posts = payload.get("data", {}).get("children", [])
+    titles: list[str] = []
+    for item in posts:
+        title = item.get("data", {}).get("title")
+        if isinstance(title, str) and title.strip():
+            titles.append(title.strip())
+    return titles[:limit]
+
+
+def _topic_overlap_score(topic: str, reference: str) -> float:
+    left = set(_slugify_topic(topic).split())
+    right = set(_slugify_topic(reference).split())
+    if not left or not right:
+        return 0.0
+    return round(len(left.intersection(right)) / len(left.union(right)), 4)
+
+
+def _infer_page_role(title: str, url: str) -> str:
+    normalized = _slugify_topic(f"{title} {url}")
+    if any(token in normalized for token in {"guide", "overview", "platform", "services"}):
+        return "pillar"
+    if any(token in normalized for token in {"checklist", "faq", "workflow", "playbook"}):
+        return "supporting"
+    if any(token in normalized for token in {"case study", "customer", "story"}):
+        return "proof"
+    return "supporting"
+
+
+def _infer_topic_cluster(title: str, url: str) -> str:
+    tokens = [
+        token
+        for token in _slugify_topic(f"{title} {url}").split()
+        if token not in {"the", "and", "for", "with", "from", "your", "page"}
+    ]
+    cluster = " ".join(tokens[:3]).strip()
+    return cluster or title
+
+
+def _page_summary(title: str, page_role: str, topic_cluster: str) -> str:
+    if page_role == "pillar":
+        return f"Foundational page covering {topic_cluster} with broad context and navigation value."
+    if page_role == "proof":
+        return f"Evidence-oriented page that reinforces {topic_cluster} with examples or credibility."
+    return f"Supporting page that adds practical guidance related to {topic_cluster}."
+
+
+def _link_placement_hint(page_role: str) -> str:
+    if page_role == "pillar":
+        return "Use early in the article to frame context and orient the reader."
+    if page_role == "proof":
+        return "Use after a claim or recommendation to add credibility."
+    return "Use in implementation sections to reinforce practical next steps."
 
 
 class TrendAnalysisAgent:
@@ -1055,6 +1136,7 @@ class SeoGapAgent:
 class TopicDiscoveryAgent:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
+        self._seo_client = DataForSEOClient.from_settings(settings)
 
     def discover(
         self,
@@ -1128,6 +1210,9 @@ class TopicDiscoveryAgent:
                     "mode": "stub",
                     "industry": industry,
                     "targetAudience": target_audience,
+                    "discoverySources": ["stub_seed_list"],
+                    "sourceConfidence": 0.45,
+                    "discoveredAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                 },
             )
             for topic in topics
@@ -1141,27 +1226,111 @@ class TopicDiscoveryAgent:
     ) -> list[DiscoveredTopicCandidate]:
         audience = target_audience or "general operators"
         query = f"{industry} {audience} trends"
-        titles = _news_rss_titles(query, limit=10)
-        topics = _topic_variants_from_titles(titles, industry=industry)
-        if not topics:
-            raise RuntimeError("No live discovery topics were extracted from provider results.")
+        source_candidates: dict[str, dict[str, object]] = {}
 
-        return [
-            DiscoveredTopicCandidate(
-                topic=topic,
-                discovery_note=(
-                    f"Discovered from live news signals for {audience} operating in {industry}."
-                ),
-                source_metadata={
-                    "provider": "google_news_rss",
-                    "mode": "live",
-                    "industry": industry,
-                    "targetAudience": target_audience,
-                    "headlineSamples": titles[:3],
+        news_titles = _news_rss_titles(query, limit=10)
+        for topic in _topic_variants_from_titles(news_titles, industry=industry):
+            source_candidates.setdefault(
+                topic,
+                {
+                    "sources": [],
+                    "headlineSamples": [],
+                    "signalHints": [],
                 },
             )
-            for topic in topics
-        ]
+            source_candidates[topic]["sources"].append("news")
+            source_candidates[topic]["headlineSamples"] = news_titles[:3]
+            source_candidates[topic]["signalHints"].append("recent coverage")
+
+        social_titles = _reddit_titles(f"{industry} {audience}", limit=8)
+        for topic in _topic_variants_from_titles(social_titles, industry=industry):
+            source_candidates.setdefault(
+                topic,
+                {
+                    "sources": [],
+                    "headlineSamples": [],
+                    "signalHints": [],
+                },
+            )
+            source_candidates[topic]["sources"].append("social")
+            source_candidates[topic]["socialSamples"] = social_titles[:3]
+            source_candidates[topic]["signalHints"].append("operator discussion")
+
+        if self._seo_client is not None:
+            seo_query = normalize_seo_query(f"{industry} {audience}")
+            try:
+                keyword_ideas = self._seo_client.keyword_ideas(keyword=seo_query, limit=5)
+                seo_topics = [
+                    item.keyword
+                    for item in keyword_ideas
+                    if item.keyword and industry.lower().split(" ")[0] in _slugify_topic(item.keyword)
+                ]
+                for topic in seo_topics[:5]:
+                    source_candidates.setdefault(
+                        topic,
+                        {
+                            "sources": [],
+                            "headlineSamples": [],
+                            "signalHints": [],
+                        },
+                    )
+                    source_candidates[topic]["sources"].append("seo")
+                    source_candidates[topic]["seoKeywordSamples"] = seo_topics[:3]
+                    source_candidates[topic]["signalHints"].append("keyword adjacency")
+            except Exception:
+                pass
+
+        if not source_candidates:
+            raise RuntimeError("No live discovery topics were extracted from provider results.")
+
+        ranked_topics = sorted(
+            source_candidates.items(),
+            key=lambda item: (
+                len(set(item[1].get("sources", []))),
+                _topic_overlap_score(item[0], industry),
+                len(item[0]),
+            ),
+            reverse=True,
+        )[:5]
+
+        discovered_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        results: list[DiscoveredTopicCandidate] = []
+        for topic, candidate_metadata in ranked_topics:
+            discovery_sources = sorted(set(candidate_metadata.get("sources", [])))
+            source_confidence = round(
+                min(
+                    0.95,
+                    0.45
+                    + (0.2 * len(discovery_sources))
+                    + (0.1 if "seo" in discovery_sources else 0.0),
+                ),
+                2,
+            )
+            note = (
+                f"Discovered from live {', '.join(discovery_sources)} signals for {audience} operating in {industry}."
+            )
+            results.append(
+                DiscoveredTopicCandidate(
+                    topic=topic,
+                    discovery_note=note,
+                    source_metadata={
+                        "provider": "multi_source_discovery",
+                        "mode": "live",
+                        "industry": industry,
+                        "targetAudience": target_audience,
+                        "discoverySources": discovery_sources,
+                        "sourceConfidence": source_confidence,
+                        "discoveredAt": discovered_at,
+                        "headlineSamples": candidate_metadata.get("headlineSamples", []),
+                        "socialSamples": candidate_metadata.get("socialSamples", []),
+                        "seoKeywordSamples": candidate_metadata.get("seoKeywordSamples", []),
+                        "signalHints": candidate_metadata.get("signalHints", []),
+                        "sourceFamilyCount": len(discovery_sources),
+                    },
+                )
+            )
+
+        return results
 
 
 class MarketAwarenessCrew:
@@ -1248,6 +1417,29 @@ class MarketAwarenessCrew:
             stub_signal_count = sum(
                 1 for mode in provider_modes.values() if mode == "stub"
             )
+            signal_confidence_map = {"live": 1.0, "stub": 0.7, "stub_fallback": 0.45}
+            weighted_confidence = round(
+                sum(
+                    signal_confidence_map.get(provider_modes[name], 0.5) * weights[name]
+                    for name in ("trend", "social", "seo")
+                ),
+                4,
+            )
+            fallback_weight_share = round(
+                sum(
+                    weights[name]
+                    for name in ("trend", "social", "seo")
+                    if provider_modes[name] == "stub_fallback"
+                ),
+                4,
+            )
+            confidence_band = (
+                "high"
+                if weighted_confidence >= 0.85
+                else "medium"
+                if weighted_confidence >= 0.65
+                else "low"
+            )
             qualification_status = (
                 "qualified"
                 if total >= settings.market_min_qualified_score
@@ -1273,12 +1465,41 @@ class MarketAwarenessCrew:
                     "liveSignalCount": live_signal_count,
                     "stubSignalCount": stub_signal_count,
                     "stubFallbackSignalCount": fallback_signal_count,
+                    "fallbackWeightShare": fallback_weight_share,
+                    "confidenceScore": weighted_confidence,
+                    "confidenceBand": confidence_band,
                 },
             }
             discovered = discovery_metadata.get(candidate_topic) if discovery_metadata else None
             if discovered is not None:
                 source_metadata["discovery"] = discovered.source_metadata
                 source_metadata["discoveryNote"] = discovered.discovery_note
+                source_metadata["discoveryStatus"] = {
+                    "mode": discovered.source_metadata.get("mode"),
+                    "sources": discovered.source_metadata.get("discoverySources", []),
+                    "sourceConfidence": discovered.source_metadata.get("sourceConfidence"),
+                    "headlineSamples": discovered.source_metadata.get("headlineSamples", []),
+                    "socialSamples": discovered.source_metadata.get("socialSamples", []),
+                    "seoKeywordSamples": discovered.source_metadata.get("seoKeywordSamples", []),
+                }
+            source_metadata["status"] = {
+                "discovery": source_metadata.get("discoveryStatus")
+                or {
+                    "mode": "manual_seed",
+                    "sources": ["seed_topic"],
+                    "sourceConfidence": 1.0,
+                },
+                "qualification": {
+                    "mode": settings.qualification_mode,
+                    "providerModes": provider_modes,
+                    "weightedScore": total,
+                    "qualificationStatus": qualification_status,
+                    "confidenceScore": weighted_confidence,
+                    "confidenceBand": confidence_band,
+                    "fallbackWeightShare": fallback_weight_share,
+                    "fallbackCount": fallback_signal_count,
+                },
+            }
 
             qualified_topics.append(
                 QualifiedTopicCandidate(
@@ -1302,6 +1523,44 @@ class MarketAwarenessCrew:
 
 
 class SitemapIngestorAgent:
+    def build_site_context(
+        self,
+        *,
+        topic: str,
+        indexed_pages: list[dict[str, str]],
+    ) -> dict[str, object]:
+        enriched_pages: list[dict[str, object]] = []
+        clusters: list[str] = []
+        for page in indexed_pages[:6]:
+            page_role = _infer_page_role(page["title"], page["url"])
+            topic_cluster = _infer_topic_cluster(page["title"], page["url"])
+            clusters.append(topic_cluster)
+            enriched_pages.append(
+                {
+                    "url": page["url"],
+                    "title": page["title"],
+                    "pageSummary": _page_summary(page["title"], page_role, topic_cluster),
+                    "pageRole": page_role,
+                    "topicCluster": topic_cluster,
+                    "topicOverlap": _topic_overlap_score(topic, page["title"]),
+                }
+            )
+
+        unique_clusters = list(dict.fromkeys(clusters))
+        return {
+            "sitemapUsed": bool(indexed_pages),
+            "indexedPageCount": len(indexed_pages),
+            "coverageTopics": unique_clusters[:5],
+            "coverageGaps": [
+                f"Add a page or section that connects {topic} to {cluster}."
+                for cluster in unique_clusters[:2]
+            ],
+            "pages": enriched_pages,
+            "linkingGuidance": (
+                "Prefer links that broaden context early and operational detail later."
+            ),
+        }
+
     def derive_internal_links(
         self,
         *,
@@ -1309,15 +1568,36 @@ class SitemapIngestorAgent:
         indexed_pages: list[dict[str, str]],
     ) -> list[InternalLinkSuggestion]:
         suggestions: list[InternalLinkSuggestion] = []
+        ranked_pages = sorted(
+            indexed_pages,
+            key=lambda page: (
+                _topic_overlap_score(topic, page["title"]),
+                -len(page["title"]),
+            ),
+            reverse=True,
+        )
 
-        for page in indexed_pages[:3]:
+        for page in ranked_pages[:3]:
             title = page["title"]
+            page_role = _infer_page_role(title, page["url"])
+            topic_cluster = _infer_topic_cluster(title, page["url"])
+            relevance_score = round(
+                0.55 + (_topic_overlap_score(topic, title) * 0.45),
+                2,
+            )
             suggestions.append(
                 InternalLinkSuggestion(
                     url=page["url"],
                     title=title,
                     anchor_text=title,
-                    rationale=f"Use this page to reinforce {topic} with an internal reference to {title}.",
+                    rationale=(
+                        f"Use this {page_role} page to reinforce {topic} with adjacent site context around {topic_cluster}."
+                    ),
+                    page_summary=_page_summary(title, page_role, topic_cluster),
+                    page_role=page_role,
+                    topic_cluster=topic_cluster,
+                    relevance_score=relevance_score,
+                    placement_hint=_link_placement_hint(page_role),
                 )
             )
 
@@ -1336,6 +1616,8 @@ class StructureStyleAgent:
         content_language: str | None,
         geo_context: str | None,
         internal_links: list[InternalLinkSuggestion],
+        qualification_metadata: dict[str, object] | None = None,
+        site_context: dict[str, object] | None = None,
     ) -> BlueprintOutput:
         response = self._llm_provider.complete_json(
             operation_name="build_article_blueprint",
@@ -1350,13 +1632,20 @@ class StructureStyleAgent:
                         "title": link.title,
                         "anchor_text": link.anchor_text,
                         "rationale": link.rationale,
+                        "page_summary": link.page_summary,
+                        "page_role": link.page_role,
+                        "topic_cluster": link.topic_cluster,
+                        "relevance_score": link.relevance_score,
+                        "placement_hint": link.placement_hint,
                     }
                     for link in internal_links
                 ],
+                "qualification_metadata": qualification_metadata or {},
+                "site_context": site_context or {},
             },
             system_prompt=(
-                "You are the Structure & Style Agent. Return valid JSON with exactly three fields: "
-                "angle, sections, style_guidance."
+                "You are the Structure & Style Agent. Return valid JSON with exactly seven fields: "
+                "angle, sections, style_guidance, differentiation_angle, differentiation_rationale, target_delta, audience_shift."
             ),
             user_prompt=(
                 "Build an explicit article blueprint for the qualified topic.\n"
@@ -1365,9 +1654,14 @@ class StructureStyleAgent:
                 f"content_language: {content_language or 'English'}\n"
                 f"geo_context: {geo_context or 'No specific geographic context'}\n"
                 f"internal_links: {[link.title for link in internal_links]}\n"
+                f"qualification_metadata: {qualification_metadata or {}}\n"
+                f"site_context: {site_context or {}}\n"
                 "Requirements:\n"
                 "- sections must be an ordered list of section names.\n"
                 "- style_guidance must describe tone and structure expectations.\n"
+                "- differentiation_angle must explain why this article is editorially distinct.\n"
+                "- differentiation_rationale must justify that distinctiveness with market or site context.\n"
+                "- target_delta must say what the article adds beyond existing content.\n"
                 "- Keep the plan deterministic and easy to follow.\n"
                 "- Return JSON only."
             ),
@@ -1383,6 +1677,11 @@ class StructureStyleAgent:
             sections=response.sections,
             style_guidance=response.style_guidance,
             internal_links=internal_links,
+            differentiation_angle=response.differentiation_angle,
+            differentiation_rationale=response.differentiation_rationale,
+            target_delta=response.target_delta,
+            audience_shift=response.audience_shift,
+            site_context=site_context or {},
         )
 
 
@@ -1421,11 +1720,21 @@ class ContentGenerationAgent:
                     "angle": blueprint.angle,
                     "sections": blueprint.sections,
                     "style_guidance": blueprint.style_guidance,
+                    "differentiation_angle": blueprint.differentiation_angle,
+                    "differentiation_rationale": blueprint.differentiation_rationale,
+                    "target_delta": blueprint.target_delta,
+                    "audience_shift": blueprint.audience_shift,
+                    "site_context": blueprint.site_context,
                     "internal_links": [
                         {
                             "title": link.title,
                             "url": link.url,
                             "anchor_text": link.anchor_text,
+                            "rationale": link.rationale,
+                            "page_summary": link.page_summary,
+                            "page_role": link.page_role,
+                            "topic_cluster": link.topic_cluster,
+                            "placement_hint": link.placement_hint,
                         }
                         for link in blueprint.internal_links
                     ],
@@ -1446,12 +1755,16 @@ class ContentGenerationAgent:
                 f"blueprint_angle: {blueprint.angle if blueprint else 'Use a practical guide angle.'}\n"
                 f"blueprint_sections: {blueprint.sections if blueprint else ['Overview', 'Core Points', 'Next Steps']}\n"
                 f"blueprint_style_guidance: {blueprint.style_guidance if blueprint else 'Use clear, neutral, reviewable language.'}\n"
+                f"blueprint_differentiation_angle: {blueprint.differentiation_angle if blueprint else 'Take a practical operational angle.'}\n"
+                f"blueprint_differentiation_rationale: {blueprint.differentiation_rationale if blueprint else 'Provide distinct value for operators.'}\n"
+                f"blueprint_target_delta: {blueprint.target_delta if blueprint else 'Add a practical implementation lens.'}\n"
                 f"internal_links: {[link.anchor_text for link in blueprint.internal_links] if blueprint else []}\n"
                 "Requirements:\n"
                 "- The body must be markdown.\n"
                 "- Include an explicit Audience line.\n"
                 "- Write in the requested content language.\n"
                 "- Reflect the requested geographic context when one is provided.\n"
+                "- Explain the differentiation angle explicitly in the introduction or first core section.\n"
                 "- Include a section that references the internal link guidance when provided.\n"
                 "- For revision_number > 0, address the QA feedback directly.\n"
                 "- Return JSON only."
@@ -1487,6 +1800,12 @@ class QaComplianceAgent:
                 "content_language": content_language,
                 "geo_context": geo_context,
                 "expected_sections": blueprint.sections if blueprint else [],
+                "expected_angle": blueprint.angle if blueprint else None,
+                "expected_differentiation_angle": (
+                    blueprint.differentiation_angle if blueprint else None
+                ),
+                "expected_target_delta": blueprint.target_delta if blueprint else None,
+                "site_context": blueprint.site_context if blueprint else {},
                 "expected_links": [
                     link.anchor_text for link in blueprint.internal_links
                 ]
@@ -1495,7 +1814,7 @@ class QaComplianceAgent:
             },
             system_prompt=(
                 f"You are the {self.role}. {self.goal} {self.backstory} "
-                "Return valid JSON with exactly two fields: passed and feedback."
+                "Return valid JSON with exactly five fields: passed, feedback, issues, revision_instructions, rubric."
             ),
             user_prompt=(
                 "Review the markdown article draft against the Phase 2 and Phase 3 rules.\n"
@@ -1506,16 +1825,27 @@ class QaComplianceAgent:
                 "- The article honors the requested language.\n"
                 "- The article honors the requested geographic context when one is provided.\n"
                 "- When blueprint sections are provided, the article should reflect them.\n"
+                "- The article should visibly deliver the differentiation angle and target delta.\n"
+                "- Internal links should be relevant to the site context when provided.\n"
                 "- The feedback must tell the generation agent what to fix if the draft fails.\n"
                 "Return JSON only.\n"
                 f"title: {draft.title}\n"
                 f"content_language: {content_language or 'English'}\n"
                 f"geo_context: {geo_context or 'No specific geographic context'}\n"
                 f"expected_sections: {blueprint.sections if blueprint else []}\n"
+                f"expected_differentiation_angle: {blueprint.differentiation_angle if blueprint else ''}\n"
+                f"expected_target_delta: {blueprint.target_delta if blueprint else ''}\n"
+                f"site_context: {blueprint.site_context if blueprint else {}}\n"
                 f"expected_links: {[link.anchor_text for link in blueprint.internal_links] if blueprint else []}\n"
                 f"body:\n{draft.body}"
             ),
             response_model=QaResponse,
         )
 
-        return QaResult(passed=response.passed, feedback=response.feedback)
+        return QaResult(
+            passed=response.passed,
+            feedback=response.feedback,
+            issues=response.issues,
+            revision_instructions=response.revision_instructions,
+            rubric=response.rubric,
+        )

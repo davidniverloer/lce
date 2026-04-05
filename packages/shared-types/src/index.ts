@@ -47,6 +47,12 @@ export type ArticleBlueprintSnapshot = {
   angle: string;
   sections: string[];
   styleGuidance: string;
+  differentiationAngle?: string;
+  differentiationRationale?: string;
+  targetDelta?: string;
+  audienceShift?: string | null;
+  siteContext?: Record<string, unknown>;
+  status?: Record<string, unknown>;
   internalLinks: InternalLinkSnapshot[];
 };
 
@@ -55,6 +61,11 @@ export type InternalLinkSnapshot = {
   title: string;
   anchorText: string;
   rationale: string;
+  pageSummary?: string;
+  pageRole?: string;
+  topicCluster?: string;
+  relevanceScore?: number;
+  placementHint?: string;
 };
 
 export type TopicGenerationRequestedPayload = {
