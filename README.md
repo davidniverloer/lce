@@ -1,12 +1,12 @@
 # Lonnser Content Engine
 
-Day 1 bootstrap for the Lonnser Content Engine (LCE): a pnpm monorepo with a Node.js orchestrator, a Python worker, PostgreSQL, RabbitMQ, Redis, and the thinnest asynchronous topic-generation slice.
+Phase 1 foundation bootstrap for the Lonnser Content Engine (LCE): a pnpm monorepo with a Node.js orchestrator, a Python worker, PostgreSQL, RabbitMQ, Redis, isolated PostgreSQL schemas, and a deterministic organization/campaign event backbone.
 
 ## What is included
 
 - `apps/orchestrator`: Express + TypeScript API, Prisma schema, and an outbox relay.
-- `workers/ai-engine`: Python 3.11+ worker using SQLAlchemy and RabbitMQ.
-- `packages/shared-types`: shared `TopicGenerationRequested` event contract.
+- `workers/ai-engine`: Python 3.11+ worker using SQLAlchemy, RabbitMQ, and idempotent audit receipts.
+- `packages/shared-types`: shared `OrganizationCreated` and `CampaignCreated` event contracts.
 - `infra/docker`: PostgreSQL, RabbitMQ, and Redis compose stack.
 
 ## Prerequisites
@@ -50,7 +50,7 @@ pnpm db:generate
 pnpm db:migrate
 ```
 
-## Run the Day 1 slice
+## Run the Phase 1 slice
 
 Start the orchestrator:
 
@@ -66,8 +66,6 @@ PYTHONPATH=workers/ai-engine/src python -m ai_engine.main
 ```
 
 ## Smoke path
-
-The API expects an `x-organization-id` header on every business request.
 
 ### Option 1: Full bootstrap in separate macOS Terminal windows
 
@@ -102,30 +100,29 @@ bash scripts/smoke-topic-flow.sh
 
 ### Manual API flow
 
-Create a campaign:
+Create an organization:
 
 ```bash
 curl -s \
-  -X POST http://localhost:3000/campaigns \
+  -X POST http://localhost:3000/organizations \
   -H 'content-type: application/json' \
-  -H 'x-organization-id: org-demo' \
-  -d '{"name":"Spring Launch","niche":"remote accounting"}'
+  -d '{"name":"Acme"}'
 ```
 
-Trigger topic generation:
+Create a campaign inside that organization:
 
 ```bash
 curl -s \
-  -X POST http://localhost:3000/campaigns/<campaign-id>/topic-generation \
-  -H 'x-organization-id: org-demo'
+  -X POST http://localhost:3000/organizations/<organization-id>/campaigns \
+  -H 'content-type: application/json' \
+  -d '{"name":"Spring Launch"}'
 ```
 
-Read generated topics:
+Read campaigns for the organization:
 
 ```bash
 curl -s \
-  http://localhost:3000/campaigns/<campaign-id>/topics \
-  -H 'x-organization-id: org-demo'
+  http://localhost:3000/organizations/<organization-id>/campaigns
 ```
 
 ## Validation commands
@@ -136,9 +133,9 @@ pnpm typecheck
 python -m compileall workers/ai-engine/src
 ```
 
-## CI/CD Phase 0
+## CI/CD Phase 1
 
-Phase 0 includes a minimal GitHub Actions workflow for dev setup validation in [.github/workflows/phase-0-dev-setup.yml](/Users/davidniverloer/Desktop/Lonnser%20Content%20Engine/lce/.github/workflows/phase-0-dev-setup.yml). It verifies:
+Phase 1 includes a minimal GitHub Actions workflow for foundation validation in [.github/workflows/phase-1-foundation.yml](/Users/davidniverloer/Desktop/Lonnser%20Content%20Engine/lce/.github/workflows/phase-1-foundation.yml). It verifies:
 
 - workspace install
 - Python worker install
@@ -146,7 +143,7 @@ Phase 0 includes a minimal GitHub Actions workflow for dev setup validation in [
 - TypeScript build
 - TypeScript typecheck
 - Python compile check
-- Docker-backed smoke flow for the Day 1 slice
+- Docker-backed smoke flow for the Phase 1 slice
 
 Run the same path locally with:
 

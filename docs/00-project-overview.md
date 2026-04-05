@@ -1,47 +1,38 @@
-# Lonnser Content Engine (LCE) — Project Overview
+# Lonnser Content Engine — Project Overview
 
 ## Mission
-Build an event-driven SaaS platform that autonomously generates SEO-optimized content using multi-agent AI orchestration.
+Build an event-driven, multi-tenant SaaS platform that orchestrates AI agents to generate SEO-optimized content autonomously.
 
-## Core Idea
-Transform:
-Market data → Topics → Article Plan → Draft → QA → Published content
+## Delivery strategy
+The system is delivered in sequential phases:
+1. Phase 1 — Foundation & Persistence
+2. Phase 2 — Core Agentic Engine
+3. Phase 3 — Market & Semantic Intelligence
+4. Phase 4 — Multi-Tenant SaaS & Dashboard
+5. Phase 5 — Ecosystem & Extensibility
 
-## System Architecture (High-Level)
-- Orchestrator (Node.js / TypeScript)
-- Worker Engine (Python / CrewAI)
-- Message Broker (RabbitMQ)
-- State Store (Redis)
-- Database (PostgreSQL)
+## Core principle
+The system follows a stateful decoupling architecture:
+- user interaction is separate from long-running execution
+- asynchronous work continues independently
+- state is persisted and observable
 
-## Key Principle
-Stateful Decoupling:
-- UI is separated from execution
-- Long-running processes continue independently
+## Core runtime
+- Orchestrator: Node.js / TypeScript
+- Workers: Python 3.11+
+- Database: PostgreSQL
+- Broker: RabbitMQ
+- State / cache: Redis
 
-## Execution Model
-Event-driven system:
-- Commands → Events → Workers → New Events
+## Current phase
+Phase 1 — Foundation & Persistence
 
-## First Goal (Day 1)
-Implement a minimal vertical slice:
-- Create Campaign
-- Emit TopicGenerationRequested
-- Worker consumes event
-- Store Topic
-- Retrieve Topic via API
+## Phase 1 summary
+Build the deterministic platform backbone without introducing AI generation complexity yet.
 
-## Non-Goals (Day 1)
-- No UI
-- No LLM calls
-- No full agent system
-- No IAM
-- No publishing integrations
-
-## Success Criteria
-System can:
-1. Accept a request
-2. Emit an event
-3. Process it asynchronously
-4. Persist result
-5. Return result via API
+## What Phase 1 is not
+- not CrewAI generation
+- not topic discovery
+- not planning intelligence
+- not dashboard productization
+- not CLI or MCP

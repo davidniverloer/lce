@@ -4,6 +4,7 @@ dist
 .env
 .venv
 .logs
+.logs-ci-*.log
 __pycache__
 .pytest_cache
 *.pyc
