@@ -7,6 +7,8 @@ organization_name="${ORGANIZATION_NAME:-Smoke Org}"
 campaign_name="${CAMPAIGN_NAME:-Smoke Campaign}"
 seed_topic="${SEED_TOPIC:-deterministic content operations}"
 market_industry="${MARKET_INDUSTRY:-}"
+content_language="${CONTENT_LANGUAGE:-English}"
+geo_context="${GEO_CONTEXT:-}"
 max_attempts="${MAX_ATTEMPTS:-25}"
 poll_interval_seconds="${POLL_INTERVAL_SECONDS:-2}"
 sitemap_url="${SITEMAP_URL:-fixture://default-sitemap}"
@@ -66,14 +68,18 @@ if [ -n "${market_industry}" ]; then
     "campaignId": sys.argv[2],
     "industry": sys.argv[3],
     "targetAudience": "operations leaders",
-  }))' "${organization_id}" "${campaign_id}" "${market_industry}")"
+    "contentLanguage": sys.argv[4],
+    "geoContext": sys.argv[5] or None,
+  }))' "${organization_id}" "${campaign_id}" "${market_industry}" "${content_language}" "${geo_context}")"
 else
   market_payload="$(python3 -c 'import json,sys; print(json.dumps({
     "organizationId": sys.argv[1],
     "campaignId": sys.argv[2],
     "seedTopic": sys.argv[3],
     "targetAudience": "operations leaders",
-  }))' "${organization_id}" "${campaign_id}" "${seed_topic}")"
+    "contentLanguage": sys.argv[4],
+    "geoContext": sys.argv[5] or None,
+  }))' "${organization_id}" "${campaign_id}" "${seed_topic}" "${content_language}" "${geo_context}")"
 fi
 
 market_response="$(curl -sS \

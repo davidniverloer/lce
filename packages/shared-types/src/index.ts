@@ -32,6 +32,8 @@ export type GenerationRequestedPayload = {
   taskId: string;
   topic: string;
   targetAudience: string | null;
+  contentLanguage: string | null;
+  geoContext: string | null;
   outputFormats: string[];
   blueprintId?: string | null;
   blueprint?: ArticleBlueprintSnapshot | null;
@@ -40,6 +42,8 @@ export type GenerationRequestedPayload = {
 export type ArticleBlueprintSnapshot = {
   topic: string;
   targetAudience: string | null;
+  contentLanguage?: string | null;
+  geoContext?: string | null;
   angle: string;
   sections: string[];
   styleGuidance: string;
@@ -61,6 +65,8 @@ export type TopicGenerationRequestedPayload = {
   industry?: string | null;
   autoDiscover?: boolean;
   targetAudience: string | null;
+  contentLanguage: string | null;
+  geoContext: string | null;
 };
 
 export type TopicQualifiedPayload = {
@@ -194,6 +200,9 @@ export const isGenerationRequestedEvent = (
     typeof payload.taskId === "string" &&
     typeof payload.topic === "string" &&
     (typeof payload.targetAudience === "string" || payload.targetAudience === null) &&
+    (typeof payload.contentLanguage === "string" ||
+      payload.contentLanguage === null) &&
+    (typeof payload.geoContext === "string" || payload.geoContext === null) &&
     Array.isArray(payload.outputFormats) &&
     payload.outputFormats.every((value) => typeof value === "string") &&
     (payload.blueprintId === undefined ||
@@ -228,7 +237,10 @@ export const isTopicGenerationRequestedEvent = (
       payload.industry === null ||
       typeof payload.industry === "string") &&
     (payload.autoDiscover === undefined || typeof payload.autoDiscover === "boolean") &&
-    (typeof payload.targetAudience === "string" || payload.targetAudience === null)
+    (typeof payload.targetAudience === "string" || payload.targetAudience === null) &&
+    (typeof payload.contentLanguage === "string" ||
+      payload.contentLanguage === null) &&
+    (typeof payload.geoContext === "string" || payload.geoContext === null)
   );
 };
 
@@ -327,6 +339,12 @@ const isArticleBlueprintSnapshot = (
     typeof candidate.topic === "string" &&
     (typeof candidate.targetAudience === "string" ||
       candidate.targetAudience === null) &&
+    (typeof candidate.contentLanguage === "string" ||
+      candidate.contentLanguage === undefined ||
+      candidate.contentLanguage === null) &&
+    (typeof candidate.geoContext === "string" ||
+      candidate.geoContext === undefined ||
+      candidate.geoContext === null) &&
     typeof candidate.angle === "string" &&
     typeof candidate.styleGuidance === "string" &&
     Array.isArray(candidate.sections) &&

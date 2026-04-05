@@ -47,6 +47,8 @@ class StubLLMProvider:
         if operation_name == "generate_draft":
             topic = str(payload["topic"])
             target_audience = payload.get("target_audience")
+            content_language = payload.get("content_language")
+            geo_context = payload.get("geo_context")
             revision_number = int(payload["revision_number"])
             qa_feedback = payload.get("qa_feedback")
             blueprint = payload.get("blueprint")
@@ -55,6 +57,16 @@ class StubLLMProvider:
                 str(target_audience).strip()
                 if isinstance(target_audience, str) and target_audience.strip()
                 else "General audience"
+            )
+            language = (
+                str(content_language).strip()
+                if isinstance(content_language, str) and str(content_language).strip()
+                else "English"
+            )
+            location = (
+                str(geo_context).strip()
+                if isinstance(geo_context, str) and str(geo_context).strip()
+                else None
             )
             title = f"{topic}: Practical Guide"
             sections = (
@@ -76,9 +88,19 @@ class StubLLMProvider:
                 f"# {title}",
                 "",
                 f"Audience: {audience}",
+                f"Language: {language}",
+                (
+                    f"Geographic Context: {location}"
+                    if location
+                    else "Geographic Context: General"
+                ),
                 "",
                 f"{topic} matters because teams need a reliable, easy-to-review starting point.",
-                "This draft explains the main idea, the expected outcome, and a simple action plan.",
+                (
+                    f"This draft explains the main idea, the expected outcome, and a simple action plan for teams operating in {location}."
+                    if location
+                    else "This draft explains the main idea, the expected outcome, and a simple action plan."
+                ),
                 "",
                 f"Style Guidance: {style_guidance}",
             ]
@@ -133,16 +155,32 @@ class StubLLMProvider:
         if operation_name == "build_article_blueprint":
             topic = str(payload["topic"])
             target_audience = payload.get("target_audience")
+            content_language = payload.get("content_language")
+            geo_context = payload.get("geo_context")
 
             audience = (
                 str(target_audience).strip()
                 if isinstance(target_audience, str) and target_audience.strip()
                 else "General audience"
             )
+            language = (
+                str(content_language).strip()
+                if isinstance(content_language, str) and str(content_language).strip()
+                else "English"
+            )
+            location = (
+                str(geo_context).strip()
+                if isinstance(geo_context, str) and str(geo_context).strip()
+                else None
+            )
 
             return response_model.model_validate(
                 {
-                    "angle": f"Show {audience.lower()} how to operationalize {topic} with clear internal references.",
+                    "angle": (
+                        f"Show {audience.lower()} how to operationalize {topic} in {location} with clear internal references."
+                        if location
+                        else f"Show {audience.lower()} how to operationalize {topic} with clear internal references."
+                    ),
                     "sections": [
                         "Context",
                         "Operational Workflow",
@@ -150,7 +188,7 @@ class StubLLMProvider:
                         "Execution Checklist",
                     ],
                     "style_guidance": (
-                        "Use concise, reviewable language with explicit operational recommendations "
+                        f"Write in {language} using concise, reviewable language with explicit operational recommendations "
                         "and natural internal-link callouts."
                     ),
                 }
@@ -158,6 +196,8 @@ class StubLLMProvider:
 
         if operation_name == "review_draft":
             body = str(payload["body"])
+            content_language = payload.get("content_language")
+            geo_context = payload.get("geo_context")
             expected_sections = payload.get("expected_sections") or []
 
             if "## Compliance Checklist" not in body:
@@ -177,6 +217,30 @@ class StubLLMProvider:
                         "feedback": "State the target audience explicitly in the article body.",
                     }
                 )
+
+            if isinstance(content_language, str) and content_language.strip():
+                expected_language_line = f"Language: {content_language.strip()}"
+                if expected_language_line not in body:
+                    return response_model.model_validate(
+                        {
+                            "passed": False,
+                            "feedback": (
+                                f"State that the article is written in {content_language.strip()} and align the draft to that language."
+                            ),
+                        }
+                    )
+
+            if isinstance(geo_context, str) and geo_context.strip():
+                expected_geo_line = f"Geographic Context: {geo_context.strip()}"
+                if expected_geo_line not in body:
+                    return response_model.model_validate(
+                        {
+                            "passed": False,
+                            "feedback": (
+                                f"Reflect the geographic context for {geo_context.strip()} explicitly in the draft."
+                            ),
+                        }
+                    )
 
             if isinstance(expected_sections, list):
                 missing_section = next(

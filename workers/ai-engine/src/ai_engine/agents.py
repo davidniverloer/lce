@@ -46,6 +46,8 @@ class InternalLinkSuggestion:
 class BlueprintOutput:
     topic: str
     target_audience: str | None
+    content_language: str | None
+    geo_context: str | None
     angle: str
     sections: list[str]
     style_guidance: str
@@ -307,6 +309,8 @@ class StructureStyleAgent:
         *,
         topic: str,
         target_audience: str | None,
+        content_language: str | None,
+        geo_context: str | None,
         internal_links: list[InternalLinkSuggestion],
     ) -> BlueprintOutput:
         response = self._llm_provider.complete_json(
@@ -314,6 +318,8 @@ class StructureStyleAgent:
             payload={
                 "topic": topic,
                 "target_audience": target_audience,
+                "content_language": content_language,
+                "geo_context": geo_context,
                 "internal_links": [
                     {
                         "url": link.url,
@@ -332,6 +338,8 @@ class StructureStyleAgent:
                 "Build an explicit article blueprint for the qualified topic.\n"
                 f"topic: {topic}\n"
                 f"target_audience: {target_audience or 'General audience'}\n"
+                f"content_language: {content_language or 'English'}\n"
+                f"geo_context: {geo_context or 'No specific geographic context'}\n"
                 f"internal_links: {[link.title for link in internal_links]}\n"
                 "Requirements:\n"
                 "- sections must be an ordered list of section names.\n"
@@ -345,6 +353,8 @@ class StructureStyleAgent:
         return BlueprintOutput(
             topic=topic,
             target_audience=target_audience,
+            content_language=content_language,
+            geo_context=geo_context,
             angle=response.angle,
             sections=response.sections,
             style_guidance=response.style_guidance,
@@ -366,6 +376,8 @@ class ContentGenerationAgent:
         *,
         topic: str,
         target_audience: str | None,
+        content_language: str | None,
+        geo_context: str | None,
         revision_number: int,
         qa_feedback: str | None,
         blueprint: BlueprintOutput | None,
@@ -375,6 +387,8 @@ class ContentGenerationAgent:
             payload={
                 "topic": topic,
                 "target_audience": target_audience,
+                "content_language": content_language,
+                "geo_context": geo_context,
                 "revision_number": revision_number,
                 "qa_feedback": qa_feedback,
                 "blueprint": None
@@ -401,6 +415,8 @@ class ContentGenerationAgent:
                 "Create a markdown article draft.\n"
                 f"topic: {topic}\n"
                 f"target_audience: {target_audience or 'General audience'}\n"
+                f"content_language: {content_language or 'English'}\n"
+                f"geo_context: {geo_context or 'No specific geographic context'}\n"
                 f"revision_number: {revision_number}\n"
                 f"qa_feedback: {qa_feedback or 'None'}\n"
                 f"blueprint_angle: {blueprint.angle if blueprint else 'Use a practical guide angle.'}\n"
@@ -410,6 +426,8 @@ class ContentGenerationAgent:
                 "Requirements:\n"
                 "- The body must be markdown.\n"
                 "- Include an explicit Audience line.\n"
+                "- Write in the requested content language.\n"
+                "- Reflect the requested geographic context when one is provided.\n"
                 "- Include a section that references the internal link guidance when provided.\n"
                 "- For revision_number > 0, address the QA feedback directly.\n"
                 "- Return JSON only."
@@ -429,12 +447,21 @@ class QaComplianceAgent:
             "A deterministic QA reviewer for the LCE execution loop."
         )
 
-    def review(self, draft: DraftOutput, blueprint: BlueprintOutput | None) -> QaResult:
+    def review(
+        self,
+        draft: DraftOutput,
+        blueprint: BlueprintOutput | None,
+        *,
+        content_language: str | None,
+        geo_context: str | None,
+    ) -> QaResult:
         response = self._llm_provider.complete_json(
             operation_name="review_draft",
             payload={
                 "title": draft.title,
                 "body": draft.body,
+                "content_language": content_language,
+                "geo_context": geo_context,
                 "expected_sections": blueprint.sections if blueprint else [],
                 "expected_links": [
                     link.anchor_text for link in blueprint.internal_links
@@ -452,10 +479,14 @@ class QaComplianceAgent:
                 "- The article states the target audience explicitly.\n"
                 "- The article includes a compliance checklist section.\n"
                 "- The article uses neutral, reviewable language.\n"
+                "- The article honors the requested language.\n"
+                "- The article honors the requested geographic context when one is provided.\n"
                 "- When blueprint sections are provided, the article should reflect them.\n"
                 "- The feedback must tell the generation agent what to fix if the draft fails.\n"
                 "Return JSON only.\n"
                 f"title: {draft.title}\n"
+                f"content_language: {content_language or 'English'}\n"
+                f"geo_context: {geo_context or 'No specific geographic context'}\n"
                 f"expected_sections: {blueprint.sections if blueprint else []}\n"
                 f"expected_links: {[link.anchor_text for link in blueprint.internal_links] if blueprint else []}\n"
                 f"body:\n{draft.body}"

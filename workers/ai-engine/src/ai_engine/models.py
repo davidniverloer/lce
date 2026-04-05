@@ -27,6 +27,8 @@ class MarketAnalysisRequest(Base):
         nullable=True,
     )
     target_audience: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content_language: Mapped[str | None] = mapped_column(Text, nullable=True)
+    geo_context: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=False),
@@ -68,6 +70,8 @@ class GenerationTask(Base):
     campaign_id: Mapped[str] = mapped_column(UUID(as_uuid=False), nullable=False)
     topic: Mapped[str] = mapped_column(Text, nullable=False)
     target_audience: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content_language: Mapped[str | None] = mapped_column(Text, nullable=True)
+    geo_context: Mapped[str | None] = mapped_column(Text, nullable=True)
     output_formats: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False)
     qualified_topic_id: Mapped[str | None] = mapped_column(

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from difflib import SequenceMatcher
+import re
 import uuid
 
 from sqlalchemy.exc import IntegrityError
@@ -34,6 +36,7 @@ from .models import (
     ProcessedEventLog,
     QualifiedTopic,
     SitemapIngestion,
+    RepositoryArticle,
 )
 
 GENERATION_REQUESTED = "GenerationRequested"
@@ -41,6 +44,8 @@ TOPIC_GENERATION_REQUESTED = "TopicGenerationRequested"
 TOPIC_QUALIFIED = "TopicQualified"
 SITEMAP_UPDATED = "SitemapUpdated"
 BLUEPRINT_VALIDATED = "BlueprintValidated"
+SEMANTIC_SIMILARITY_THRESHOLD = 0.55
+MAX_NOVELTY_PENALTY = 25.0
 
 
 @dataclass(frozen=True)
@@ -60,6 +65,8 @@ class TopicGenerationRequestedEvent(BaseEvent):
     industry: str | None
     auto_discover: bool
     target_audience: str | None
+    content_language: str | None
+    geo_context: str | None
 
 
 @dataclass(frozen=True)
@@ -140,6 +147,14 @@ def parse_event(raw: dict) -> BaseEvent | GenerationRequestedEvent:
         if target_audience is not None and not isinstance(target_audience, str):
             raise ValueError("targetAudience must be a string or null")
 
+        content_language = payload.get("contentLanguage")
+        if content_language is not None and not isinstance(content_language, str):
+            raise ValueError("contentLanguage must be a string or null")
+
+        geo_context = payload.get("geoContext")
+        if geo_context is not None and not isinstance(geo_context, str):
+            raise ValueError("geoContext must be a string or null")
+
         return TopicGenerationRequestedEvent(
             organization_id=str(payload["organizationId"]),
             campaign_id=str(payload["campaignId"]),
@@ -148,6 +163,8 @@ def parse_event(raw: dict) -> BaseEvent | GenerationRequestedEvent:
             industry=industry,
             auto_discover=auto_discover,
             target_audience=target_audience,
+            content_language=content_language,
+            geo_context=geo_context,
             **common_kwargs,
         )
 
@@ -237,6 +254,14 @@ def parse_event(raw: dict) -> BaseEvent | GenerationRequestedEvent:
         if target_audience is not None and not isinstance(target_audience, str):
             raise ValueError("targetAudience must be a string or null")
 
+        content_language = payload.get("contentLanguage")
+        if content_language is not None and not isinstance(content_language, str):
+            raise ValueError("contentLanguage must be a string or null")
+
+        geo_context = payload.get("geoContext")
+        if geo_context is not None and not isinstance(geo_context, str):
+            raise ValueError("geoContext must be a string or null")
+
         blueprint_id = payload.get("blueprintId")
         if blueprint_id is not None and not isinstance(blueprint_id, str):
             raise ValueError("blueprintId must be a string or null")
@@ -252,6 +277,8 @@ def parse_event(raw: dict) -> BaseEvent | GenerationRequestedEvent:
                 task_id=str(payload["taskId"]),
                 topic=str(payload["topic"]),
                 target_audience=target_audience,
+                content_language=content_language,
+                geo_context=geo_context,
                 output_formats=list(output_formats),
                 blueprint_id=blueprint_id,
                 blueprint=blueprint,
@@ -378,6 +405,128 @@ def _enqueue_event(
     )
 
 
+def _normalize_text(value: str) -> str:
+    normalized = re.sub(r"[^a-z0-9\s]", " ", value.lower())
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _tokenize(value: str) -> set[str]:
+    return {token for token in _normalize_text(value).split(" ") if token}
+
+
+def _semantic_similarity(left: str, right: str) -> float:
+    normalized_left = _normalize_text(left)
+    normalized_right = _normalize_text(right)
+    if not normalized_left or not normalized_right:
+        return 0.0
+
+    left_tokens = _tokenize(left)
+    right_tokens = _tokenize(right)
+    intersection = left_tokens.intersection(right_tokens)
+    union = left_tokens.union(right_tokens)
+    jaccard = (len(intersection) / len(union)) if union else 0.0
+    sequence_ratio = SequenceMatcher(None, normalized_left, normalized_right).ratio()
+    containment = 1.0 if normalized_left in normalized_right or normalized_right in normalized_left else 0.0
+    return round(max(jaccard, sequence_ratio, containment), 4)
+
+
+def _prior_topic_and_article_texts(
+    *,
+    session: Session,
+    organization_id: str,
+) -> list[str]:
+    prior_topics = (
+        session.query(QualifiedTopic.topic)
+        .filter(QualifiedTopic.organization_id == organization_id)
+        .all()
+    )
+    prior_articles = (
+        session.query(RepositoryArticle.title, RepositoryArticle.body)
+        .filter(RepositoryArticle.organization_id == organization_id)
+        .all()
+    )
+
+    texts = [topic for (topic,) in prior_topics if isinstance(topic, str) and topic.strip()]
+    for title, body in prior_articles:
+        if isinstance(title, str) and title.strip():
+            texts.append(title)
+        if isinstance(body, str) and body.strip():
+            texts.append(body[:1200])
+    return texts
+
+
+def _apply_novelty_rules(
+    *,
+    session: Session,
+    organization_id: str,
+    candidates: list[QualifiedTopicCandidate],
+) -> list[QualifiedTopicCandidate]:
+    prior_texts = _prior_topic_and_article_texts(
+        session=session,
+        organization_id=organization_id,
+    )
+    exact_duplicates = {_normalize_text(text) for text in prior_texts}
+
+    unique_candidates: list[QualifiedTopicCandidate] = []
+    seen_candidate_topics: set[str] = set()
+    for candidate in candidates:
+        normalized_topic = _normalize_text(candidate.topic)
+        if not normalized_topic or normalized_topic in exact_duplicates:
+            continue
+        if normalized_topic in seen_candidate_topics:
+            continue
+        seen_candidate_topics.add(normalized_topic)
+        unique_candidates.append(candidate)
+
+    reranked_candidates: list[QualifiedTopicCandidate] = []
+    for candidate in unique_candidates:
+        similarity = 0.0
+        closest_match: str | None = None
+        for prior_text in prior_texts:
+            current_similarity = _semantic_similarity(candidate.topic, prior_text)
+            if current_similarity > similarity:
+                similarity = current_similarity
+                closest_match = prior_text[:160]
+
+        novelty_penalty = 0.0
+        if similarity >= SEMANTIC_SIMILARITY_THRESHOLD:
+            normalized_similarity = (
+                (similarity - SEMANTIC_SIMILARITY_THRESHOLD)
+                / (1.0 - SEMANTIC_SIMILARITY_THRESHOLD)
+            )
+            novelty_penalty = round(min(MAX_NOVELTY_PENALTY, normalized_similarity * MAX_NOVELTY_PENALTY), 2)
+
+        adjusted_score = round(max(0.0, candidate.total_score - novelty_penalty), 2)
+        reranked_candidates.append(
+            QualifiedTopicCandidate(
+                topic=candidate.topic,
+                trend_score=candidate.trend_score,
+                social_score=candidate.social_score,
+                seo_score=candidate.seo_score,
+                total_score=adjusted_score,
+                qualification_note=(
+                    f"{candidate.qualification_note} Novelty penalty applied: {novelty_penalty}."
+                    if novelty_penalty > 0
+                    else f"{candidate.qualification_note} Topic cleared the novelty check."
+                ),
+                source_metadata={
+                    **candidate.source_metadata,
+                    "novelty": {
+                        "semanticSimilarity": similarity,
+                        "noveltyPenalty": novelty_penalty,
+                        "closestPriorMatch": closest_match,
+                    },
+                },
+            )
+        )
+
+    return sorted(
+        reranked_candidates,
+        key=lambda candidate: candidate.total_score,
+        reverse=True,
+    )
+
+
 def _process_topic_generation_requested(
     *,
     session: Session,
@@ -429,6 +578,12 @@ def _process_topic_generation_requested(
             target_audience=event.target_audience,
         )
 
+    candidates = _apply_novelty_rules(
+        session=session,
+        organization_id=event.organization_id,
+        candidates=candidates,
+    )
+
     top_candidate_id: str | None = None
     top_candidate_score = -1.0
 
@@ -457,7 +612,9 @@ def _process_topic_generation_requested(
     request.status = "completed"
 
     if top_candidate_id is None:
-        raise ValueError("Market analysis did not produce any qualified topics")
+        raise ValueError(
+            "Market analysis did not produce any unique qualified topics after novelty filtering"
+        )
 
     top_candidate = candidates[0]
     _enqueue_event(
@@ -500,6 +657,10 @@ def _process_topic_qualified(
     if sitemap is None:
         return
 
+    request = session.get(MarketAnalysisRequest, event.analysis_request_id)
+    content_language = request.content_language if request else None
+    geo_context = request.geo_context if request else None
+
     _ensure_blueprint(
         session=session,
         organization_id=event.organization_id,
@@ -507,6 +668,8 @@ def _process_topic_qualified(
         qualified_topic=qualified_topic,
         sitemap=sitemap,
         target_audience=event.target_audience,
+        content_language=content_language,
+        geo_context=geo_context,
         llm_provider=llm_provider,
     )
 
@@ -536,6 +699,8 @@ def _process_sitemap_updated(
 
     request = session.get(MarketAnalysisRequest, qualified_topic.analysis_request_id)
     target_audience = request.target_audience if request else None
+    content_language = request.content_language if request else None
+    geo_context = request.geo_context if request else None
 
     _ensure_blueprint(
         session=session,
@@ -544,6 +709,8 @@ def _process_sitemap_updated(
         qualified_topic=qualified_topic,
         sitemap=sitemap,
         target_audience=target_audience,
+        content_language=content_language,
+        geo_context=geo_context,
         llm_provider=llm_provider,
     )
 
@@ -556,6 +723,8 @@ def _ensure_blueprint(
     qualified_topic: QualifiedTopic,
     sitemap: SitemapIngestion,
     target_audience: str | None,
+    content_language: str | None,
+    geo_context: str | None,
     llm_provider: LLMProvider,
 ) -> None:
     existing_blueprint = (
@@ -593,6 +762,8 @@ def _ensure_blueprint(
     blueprint = structure_agent.build_blueprint(
         topic=qualified_topic.topic,
         target_audience=target_audience,
+        content_language=content_language,
+        geo_context=geo_context,
         internal_links=internal_links,
     )
 
@@ -600,6 +771,8 @@ def _ensure_blueprint(
     blueprint_json = {
         "topic": blueprint.topic,
         "targetAudience": blueprint.target_audience,
+        "contentLanguage": blueprint.content_language,
+        "geoContext": blueprint.geo_context,
         "angle": blueprint.angle,
         "sections": blueprint.sections,
         "styleGuidance": blueprint.style_guidance,
@@ -683,6 +856,8 @@ def _process_blueprint_validated(
             campaign_id=event.campaign_id,
             topic=blueprint.topic,
             target_audience=blueprint_json.get("targetAudience"),
+            content_language=blueprint_json.get("contentLanguage"),
+            geo_context=blueprint_json.get("geoContext"),
             output_formats=["markdown_article"],
             status="queued",
             qualified_topic_id=event.qualified_topic_id,
@@ -700,6 +875,8 @@ def _process_blueprint_validated(
             "taskId": task_id,
             "topic": blueprint.topic,
             "targetAudience": blueprint_json.get("targetAudience"),
+            "contentLanguage": blueprint_json.get("contentLanguage"),
+            "geoContext": blueprint_json.get("geoContext"),
             "outputFormats": ["markdown_article"],
             "blueprintId": event.blueprint_id,
             "blueprint": blueprint_json,
