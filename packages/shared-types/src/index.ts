@@ -57,7 +57,9 @@ export type TopicGenerationRequestedPayload = {
   organizationId: string;
   campaignId: string;
   analysisRequestId: string;
-  seedTopic: string;
+  seedTopic: string | null;
+  industry?: string | null;
+  autoDiscover?: boolean;
   targetAudience: string | null;
 };
 
@@ -221,7 +223,11 @@ export const isTopicGenerationRequestedEvent = (
     typeof payload?.organizationId === "string" &&
     typeof payload.campaignId === "string" &&
     typeof payload.analysisRequestId === "string" &&
-    typeof payload.seedTopic === "string" &&
+    (typeof payload.seedTopic === "string" || payload.seedTopic === null) &&
+    (payload.industry === undefined ||
+      payload.industry === null ||
+      typeof payload.industry === "string") &&
+    (payload.autoDiscover === undefined || typeof payload.autoDiscover === "boolean") &&
     (typeof payload.targetAudience === "string" || payload.targetAudience === null)
   );
 };

@@ -19,7 +19,13 @@ class MarketAnalysisRequest(Base):
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True)
     organization_id: Mapped[str] = mapped_column(UUID(as_uuid=False), nullable=False)
     campaign_id: Mapped[str] = mapped_column(UUID(as_uuid=False), nullable=False)
-    seed_topic: Mapped[str] = mapped_column(Text, nullable=False)
+    seed_topic: Mapped[str | None] = mapped_column(Text, nullable=True)
+    industry: Mapped[str | None] = mapped_column(Text, nullable=True)
+    auto_discover: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    discovered_topics: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JSONB,
+        nullable=True,
+    )
     target_audience: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(

@@ -13,6 +13,7 @@ base_url="${BASE_URL:-http://localhost:3000}"
 organization_name="${ORGANIZATION_NAME:-Demo Org}"
 campaign_name="${CAMPAIGN_NAME:-Spring Launch}"
 seed_topic="${SEED_TOPIC:-deterministic content operations}"
+market_industry="${MARKET_INDUSTRY:-}"
 docker_compose_file="${repo_root}/infra/docker/docker-compose.yml"
 orchestrator_log="${logs_dir}/orchestrator.log"
 worker_log="${logs_dir}/ai-engine.log"
@@ -49,12 +50,22 @@ stop_existing_processes() {
   fi
 
   local worker_pids
-  worker_pids="$(pgrep -f 'python -m ai_engine.main' || true)"
+  worker_pids="$(pgrep -f 'ai_engine.main' || true)"
 
   if [ -n "${worker_pids}" ]; then
     echo "Stopping existing ai_engine worker process(es): ${worker_pids}"
     kill ${worker_pids} >/dev/null 2>&1 || true
   fi
+
+  local orchestrator_pids
+  orchestrator_pids="$(pgrep -f 'pnpm --filter @lce/orchestrator dev|tsx watch src/server.ts' || true)"
+
+  if [ -n "${orchestrator_pids}" ]; then
+    echo "Stopping existing orchestrator process(es): ${orchestrator_pids}"
+    kill ${orchestrator_pids} >/dev/null 2>&1 || true
+  fi
+
+  sleep 1
 }
 
 cleanup() {
@@ -127,6 +138,9 @@ set -a
 source "${repo_root}/.env"
 set +a
 
+RABBITMQ_GENERATION_QUEUE="${RABBITMQ_GENERATION_QUEUE:-${RABBITMQ_TOPIC_GENERATION_QUEUE:-content.generation-requests}}"
+export RABBITMQ_GENERATION_QUEUE
+
 echo "Installing Node dependencies"
 CI=true pnpm install
 
@@ -142,6 +156,7 @@ echo "Generating Prisma client"
 pnpm db:generate
 
 echo "Starting Docker infrastructure"
+docker compose -f "${docker_compose_file}" down -v >/dev/null 2>&1 || true
 docker compose -f "${docker_compose_file}" up -d
 
 echo "Applying database migration"
@@ -187,4 +202,4 @@ campaign_id="$(printf '%s' "${campaign_response}" | python3 -c 'import json,sys;
 printf 'Campaign id: %s\n' "${campaign_id}"
 
 echo "Running Phase 3 smoke validation"
-SEED_TOPIC="${seed_topic}" bash "${repo_root}/scripts/smoke-topic-flow.sh"
+SEED_TOPIC="${seed_topic}" MARKET_INDUSTRY="${market_industry}" bash "${repo_root}/scripts/smoke-topic-flow.sh"

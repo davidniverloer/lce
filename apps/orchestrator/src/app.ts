@@ -92,7 +92,9 @@ const createTopicGenerationRequestedEvent = (
   organizationId: string,
   campaignId: string,
   analysisRequestId: string,
-  seedTopic: string,
+  seedTopic: string | null,
+  industry: string | null,
+  autoDiscover: boolean,
   targetAudience: string | null,
 ): TopicGenerationRequestedEvent => ({
   eventId: randomUUID(),
@@ -104,6 +106,8 @@ const createTopicGenerationRequestedEvent = (
     campaignId,
     analysisRequestId,
     seedTopic,
+    industry,
+    autoDiscover,
     targetAudience,
   },
 });
@@ -363,6 +367,16 @@ export const createApp = () => {
     }
 
     try {
+      const analysisRequest = await prismaExtended.marketAnalysisRequest.findFirst({
+        where: {
+          organizationId,
+          campaignId,
+        },
+        orderBy: {
+          createdAt: "desc",
+        },
+      });
+
       const topics = await prismaExtended.qualifiedTopic.findMany({
         where: {
           organizationId,
@@ -374,6 +388,17 @@ export const createApp = () => {
       res.json({
         organizationId,
         campaignId,
+        analysisRequest: analysisRequest
+          ? {
+              analysisRequestId: analysisRequest.id,
+              seedTopic: analysisRequest.seedTopic,
+              industry: analysisRequest.industry,
+              autoDiscover: analysisRequest.autoDiscover,
+              discoveredTopics: analysisRequest.discoveredTopics,
+              targetAudience: analysisRequest.targetAudience,
+              status: analysisRequest.status,
+            }
+          : null,
         qualifiedTopics: topics.map((topic: any) => ({
           id: topic.id,
           topic: topic.topic,
@@ -393,11 +418,13 @@ export const createApp = () => {
     const organizationId = getString(req.body?.organizationId);
     const campaignId = getString(req.body?.campaignId);
     const seedTopic = getString(req.body?.seedTopic);
+    const industry = getString(req.body?.industry);
     const targetAudience = getString(req.body?.targetAudience);
+    const autoDiscover = !seedTopic;
 
-    if (!organizationId || !campaignId || !seedTopic) {
+    if (!organizationId || !campaignId || (!seedTopic && !industry)) {
       res.status(400).json({
-        error: "organizationId, campaignId, and seedTopic are required",
+        error: "organizationId, campaignId, and either seedTopic or industry are required",
       });
       return;
     }
@@ -420,6 +447,8 @@ export const createApp = () => {
             organizationId,
             campaignId,
             seedTopic,
+            industry,
+            autoDiscover,
             targetAudience,
             status: "queued",
           },
@@ -430,6 +459,8 @@ export const createApp = () => {
           campaignId,
           createdRequest.id,
           seedTopic,
+          industry,
+          autoDiscover,
           targetAudience,
         );
 
@@ -454,6 +485,9 @@ export const createApp = () => {
         analysisRequestId: analysisRequest.id,
         organizationId: analysisRequest.organizationId,
         campaignId: analysisRequest.campaignId,
+        seedTopic: analysisRequest.seedTopic,
+        industry: analysisRequest.industry,
+        autoDiscover: analysisRequest.autoDiscover,
         status: analysisRequest.status,
       });
     } catch (error) {

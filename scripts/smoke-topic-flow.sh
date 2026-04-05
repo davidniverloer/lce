@@ -6,6 +6,7 @@ base_url="${BASE_URL:-http://localhost:3000}"
 organization_name="${ORGANIZATION_NAME:-Smoke Org}"
 campaign_name="${CAMPAIGN_NAME:-Smoke Campaign}"
 seed_topic="${SEED_TOPIC:-deterministic content operations}"
+market_industry="${MARKET_INDUSTRY:-}"
 max_attempts="${MAX_ATTEMPTS:-25}"
 poll_interval_seconds="${POLL_INTERVAL_SECONDS:-2}"
 sitemap_url="${SITEMAP_URL:-fixture://default-sitemap}"
@@ -59,10 +60,26 @@ campaign_response="$(curl -sS \
 printf 'Campaign response: %s\n' "${campaign_response}"
 campaign_id="$(printf '%s' "${campaign_response}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
 
+if [ -n "${market_industry}" ]; then
+  market_payload="$(python3 -c 'import json,sys; print(json.dumps({
+    "organizationId": sys.argv[1],
+    "campaignId": sys.argv[2],
+    "industry": sys.argv[3],
+    "targetAudience": "operations leaders",
+  }))' "${organization_id}" "${campaign_id}" "${market_industry}")"
+else
+  market_payload="$(python3 -c 'import json,sys; print(json.dumps({
+    "organizationId": sys.argv[1],
+    "campaignId": sys.argv[2],
+    "seedTopic": sys.argv[3],
+    "targetAudience": "operations leaders",
+  }))' "${organization_id}" "${campaign_id}" "${seed_topic}")"
+fi
+
 market_response="$(curl -sS \
   -X POST "${base_url}/market/analyze" \
   -H "content-type: application/json" \
-  -d "{\"organizationId\":\"${organization_id}\",\"campaignId\":\"${campaign_id}\",\"seedTopic\":\"${seed_topic}\",\"targetAudience\":\"operations leaders\"}")"
+  -d "${market_payload}")"
 printf 'Market analyze response: %s\n' "${market_response}"
 analysis_request_id="$(printf '%s' "${market_response}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["analysisRequestId"])')"
 

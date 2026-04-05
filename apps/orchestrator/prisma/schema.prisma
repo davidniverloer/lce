@@ -43,7 +43,10 @@ model MarketAnalysisRequest {
   id             String   @id @default(uuid()) @db.Uuid
   organizationId String   @map("organization_id") @db.Uuid
   campaignId     String   @map("campaign_id") @db.Uuid
-  seedTopic      String   @map("seed_topic")
+  seedTopic      String?  @map("seed_topic")
+  industry       String?
+  autoDiscover   Boolean  @default(false) @map("auto_discover")
+  discoveredTopics Json?  @map("discovered_topics")
   targetAudience String?  @map("target_audience")
   status         String
   createdAt      DateTime @default(now()) @map("created_at")

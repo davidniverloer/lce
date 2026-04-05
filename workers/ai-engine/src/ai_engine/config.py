@@ -35,6 +35,14 @@ def _read_float(name: str, default: float) -> float:
         raise RuntimeError(f"Invalid float value for {name}: {value}") from exc
 
 
+def _read_generation_queue() -> str:
+    return (
+        _read_optional("RABBITMQ_GENERATION_QUEUE")
+        or _read_optional("RABBITMQ_TOPIC_GENERATION_QUEUE")
+        or "content.generation-requests"
+    )
+
+
 @dataclass(frozen=True)
 class Settings:
     database_url: str
@@ -60,10 +68,7 @@ def get_settings() -> Settings:
         database_url=_read("DATABASE_URL"),
         rabbitmq_url=_read("RABBITMQ_URL"),
         rabbitmq_exchange=_read("RABBITMQ_EXCHANGE", "lce.events"),
-        generation_queue=_read(
-            "RABBITMQ_GENERATION_QUEUE",
-            "content.generation-requests",
-        ),
+        generation_queue=_read_generation_queue(),
         consumer_name=_read(
             "INTEGRATION_CONSUMER_NAME",
             "ai-engine-generation-consumer",

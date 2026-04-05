@@ -9,12 +9,15 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from .agents import (
     ContentGenerationAgent,
+    DiscoveredTopicCandidate,
     MarketAwarenessCrew,
     QaComplianceAgent,
+    QualifiedTopicCandidate,
     SeoGapAgent,
     SitemapIngestorAgent,
     StructureStyleAgent,
     SocialListeningAgent,
+    TopicDiscoveryAgent,
     TrendAnalysisAgent,
 )
 from .config import Settings
@@ -53,7 +56,9 @@ class TopicGenerationRequestedEvent(BaseEvent):
     organization_id: str
     campaign_id: str
     analysis_request_id: str
-    seed_topic: str
+    seed_topic: str | None
+    industry: str | None
+    auto_discover: bool
     target_audience: str | None
 
 
@@ -114,10 +119,22 @@ def parse_event(raw: dict) -> BaseEvent | GenerationRequestedEvent:
     }
 
     if event_type == TOPIC_GENERATION_REQUESTED:
-        required = ("organizationId", "campaignId", "analysisRequestId", "seedTopic")
+        required = ("organizationId", "campaignId", "analysisRequestId")
         for field in required:
             if not isinstance(payload.get(field), str) or not str(payload[field]).strip():
                 raise ValueError(f"Missing required payload field: {field}")
+
+        seed_topic = payload.get("seedTopic")
+        if seed_topic is not None and not isinstance(seed_topic, str):
+            raise ValueError("seedTopic must be a string or null")
+
+        industry = payload.get("industry")
+        if industry is not None and not isinstance(industry, str):
+            raise ValueError("industry must be a string or null")
+
+        auto_discover = bool(payload.get("autoDiscover", False))
+        if not seed_topic and not industry:
+            raise ValueError("seedTopic or industry is required")
 
         target_audience = payload.get("targetAudience")
         if target_audience is not None and not isinstance(target_audience, str):
@@ -127,7 +144,9 @@ def parse_event(raw: dict) -> BaseEvent | GenerationRequestedEvent:
             organization_id=str(payload["organizationId"]),
             campaign_id=str(payload["campaignId"]),
             analysis_request_id=str(payload["analysisRequestId"]),
-            seed_topic=str(payload["seedTopic"]),
+            seed_topic=seed_topic,
+            industry=industry,
+            auto_discover=auto_discover,
             target_audience=target_audience,
             **common_kwargs,
         )
@@ -372,14 +391,43 @@ def _process_topic_generation_requested(
     request.status = "processing"
 
     crew = MarketAwarenessCrew(
+        discovery_agent=TopicDiscoveryAgent(),
         trend_agent=TrendAnalysisAgent(),
         social_agent=SocialListeningAgent(),
         seo_agent=SeoGapAgent(settings),
     )
-    candidates = crew.qualify(
-        seed_topic=event.seed_topic,
-        target_audience=event.target_audience,
-    )
+    candidates: list[QualifiedTopicCandidate]
+    if event.auto_discover:
+        if not event.industry:
+            raise ValueError("industry is required when auto discovery is enabled")
+
+        discovered_topics = crew.discover(
+            industry=event.industry,
+            target_audience=event.target_audience,
+        )
+        request.discovered_topics = [
+            {
+                "topic": candidate.topic,
+                "discoveryNote": candidate.discovery_note,
+                "sourceMetadata": candidate.source_metadata,
+            }
+            for candidate in discovered_topics
+        ]
+        candidates = crew.qualify_topics(
+            seed_topic_context=event.industry,
+            candidate_topics=[candidate.topic for candidate in discovered_topics],
+            target_audience=event.target_audience,
+            discovery_metadata={
+                candidate.topic: candidate for candidate in discovered_topics
+            },
+        )
+    else:
+        if not event.seed_topic:
+            raise ValueError("seedTopic is required when auto discovery is disabled")
+        candidates = crew.qualify(
+            seed_topic=event.seed_topic,
+            target_audience=event.target_audience,
+        )
 
     top_candidate_id: str | None = None
     top_candidate_score = -1.0

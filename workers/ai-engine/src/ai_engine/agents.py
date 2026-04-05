@@ -28,6 +28,13 @@ class QualifiedTopicCandidate:
 
 
 @dataclass(frozen=True)
+class DiscoveredTopicCandidate:
+    topic: str
+    discovery_note: str
+    source_metadata: dict[str, object]
+
+
+@dataclass(frozen=True)
 class InternalLinkSuggestion:
     url: str
     title: str
@@ -133,17 +140,73 @@ class SeoGapAgent:
         )
 
 
+class TopicDiscoveryAgent:
+    def discover(
+        self,
+        *,
+        industry: str,
+        target_audience: str | None,
+    ) -> list[DiscoveredTopicCandidate]:
+        normalized = industry.strip().lower()
+        audience = target_audience or "general operators"
+
+        if "health" in normalized or "medical" in normalized or "clinic" in normalized:
+            topics = [
+                "ambient AI scribes in healthcare",
+                "remote patient monitoring reimbursement",
+                "GLP-1 care coordination workflows",
+                "prior authorization automation in healthcare",
+                "nurse staffing analytics",
+            ]
+        else:
+            topics = [
+                f"{industry} workflow automation",
+                f"{industry} AI operations",
+                f"{industry} compliance checklist",
+                f"{industry} process optimization",
+                f"{industry} team enablement playbook",
+            ]
+
+        return [
+            DiscoveredTopicCandidate(
+                topic=topic,
+                discovery_note=(
+                    f"Discovered as a candidate trend for {audience} operating in {industry}."
+                ),
+                source_metadata={
+                    "provider": "topic_discovery_stub",
+                    "industry": industry,
+                    "targetAudience": target_audience,
+                },
+            )
+            for topic in topics
+        ]
+
+
 class MarketAwarenessCrew:
     def __init__(
         self,
         *,
+        discovery_agent: TopicDiscoveryAgent,
         trend_agent: TrendAnalysisAgent,
         social_agent: SocialListeningAgent,
         seo_agent: SeoGapAgent,
     ) -> None:
+        self._discovery_agent = discovery_agent
         self._trend_agent = trend_agent
         self._social_agent = social_agent
         self._seo_agent = seo_agent
+
+    def discover(
+        self,
+        *,
+        industry: str,
+        target_audience: str | None,
+    ) -> list[DiscoveredTopicCandidate]:
+        return self._discovery_agent.discover(
+            industry=industry,
+            target_audience=target_audience,
+        )
 
     def qualify(
         self,
@@ -156,17 +219,40 @@ class MarketAwarenessCrew:
             f"{seed_topic} best practices",
             f"{seed_topic} checklist",
         ]
+        return self.qualify_topics(
+            seed_topic_context=seed_topic,
+            candidate_topics=variants,
+            target_audience=target_audience,
+        )
+
+    def qualify_topics(
+        self,
+        *,
+        seed_topic_context: str,
+        candidate_topics: list[str],
+        target_audience: str | None,
+        discovery_metadata: dict[str, DiscoveredTopicCandidate] | None = None,
+    ) -> list[QualifiedTopicCandidate]:
         qualified_topics: list[QualifiedTopicCandidate] = []
 
-        for candidate_topic in variants:
-            trend = self._trend_agent.analyze(seed_topic, candidate_topic)
-            social = self._social_agent.analyze(seed_topic, candidate_topic)
-            seo = self._seo_agent.analyze(seed_topic, candidate_topic)
+        for candidate_topic in candidate_topics:
+            trend = self._trend_agent.analyze(seed_topic_context, candidate_topic)
+            social = self._social_agent.analyze(seed_topic_context, candidate_topic)
+            seo = self._seo_agent.analyze(seed_topic_context, candidate_topic)
             total = round(
                 (trend.score * 0.35) + (social.score * 0.25) + (seo.score * 0.40),
                 2,
             )
             audience_note = target_audience or "general operators"
+            source_metadata: dict[str, object] = {
+                "trend": trend.metadata,
+                "social": social.metadata,
+                "seo": seo.metadata,
+            }
+            discovered = discovery_metadata.get(candidate_topic) if discovery_metadata else None
+            if discovered is not None:
+                source_metadata["discovery"] = discovered.source_metadata
+                source_metadata["discoveryNote"] = discovered.discovery_note
 
             qualified_topics.append(
                 QualifiedTopicCandidate(
@@ -178,11 +264,7 @@ class MarketAwarenessCrew:
                     qualification_note=(
                         f"Qualified for {audience_note} because trend, social, and SEO signals all clear the minimum threshold."
                     ),
-                    source_metadata={
-                        "trend": trend.metadata,
-                        "social": social.metadata,
-                        "seo": seo.metadata,
-                    },
+                    source_metadata=source_metadata,
                 )
             )
 

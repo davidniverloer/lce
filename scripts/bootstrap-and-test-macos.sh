@@ -12,6 +12,7 @@ base_url="${BASE_URL:-http://localhost:3000}"
 organization_name="${ORGANIZATION_NAME:-Demo Org}"
 campaign_name="${CAMPAIGN_NAME:-Spring Launch}"
 seed_topic="${SEED_TOPIC:-deterministic content operations}"
+market_industry="${MARKET_INDUSTRY:-}"
 docker_compose_file="${repo_root}/infra/docker/docker-compose.yml"
 
 require_command() {
@@ -43,12 +44,22 @@ stop_existing_processes() {
   fi
 
   local worker_pids
-  worker_pids="$(pgrep -f 'python -m ai_engine.main' || true)"
+  worker_pids="$(pgrep -f 'ai_engine.main' || true)"
 
   if [ -n "${worker_pids}" ]; then
     echo "Stopping existing ai_engine worker process(es): ${worker_pids}"
     kill ${worker_pids} >/dev/null 2>&1 || true
   fi
+
+  local orchestrator_pids
+  orchestrator_pids="$(pgrep -f 'pnpm --filter @lce/orchestrator dev|tsx watch src/server.ts' || true)"
+
+  if [ -n "${orchestrator_pids}" ]; then
+    echo "Stopping existing orchestrator process(es): ${orchestrator_pids}"
+    kill ${orchestrator_pids} >/dev/null 2>&1 || true
+  fi
+
+  sleep 1
 }
 
 wait_for_health() {
@@ -106,6 +117,9 @@ else
   echo ".env already exists, leaving it unchanged"
 fi
 
+RABBITMQ_GENERATION_QUEUE="${RABBITMQ_GENERATION_QUEUE:-${RABBITMQ_TOPIC_GENERATION_QUEUE:-content.generation-requests}}"
+export RABBITMQ_GENERATION_QUEUE
+
 echo "Installing Node dependencies"
 pnpm install
 
@@ -121,6 +135,7 @@ echo "Generating Prisma client"
 pnpm db:generate
 
 echo "Starting Docker infrastructure"
+docker compose -f "${docker_compose_file}" down -v >/dev/null 2>&1 || true
 docker compose -f "${docker_compose_file}" up -d
 
 echo "Applying database migration"
@@ -129,12 +144,12 @@ pnpm db:migrate
 echo "Starting orchestrator in a new Terminal window"
 start_in_terminal \
   "LCE Orchestrator" \
-  "cd $(printf '%q' "${orchestrator_dir}") && pnpm --filter @lce/orchestrator dev"
+  "cd $(printf '%q' "${orchestrator_dir}") && RABBITMQ_GENERATION_QUEUE=$(printf '%q' "${RABBITMQ_GENERATION_QUEUE}") pnpm --filter @lce/orchestrator dev"
 
 echo "Starting worker in a new Terminal window"
 start_in_terminal \
   "LCE AI Engine" \
-  "cd $(printf '%q' "${worker_dir}") && source $(printf '%q' "${venv_dir}/bin/activate") && CREWAI_RUNTIME_HOME=$(printf '%q' "${repo_root}/.crewai-home") PYTHONPATH=$(printf '%q' "${worker_dir}/src") python -m ai_engine.main"
+  "cd $(printf '%q' "${worker_dir}") && source $(printf '%q' "${venv_dir}/bin/activate") && RABBITMQ_GENERATION_QUEUE=$(printf '%q' "${RABBITMQ_GENERATION_QUEUE}") CREWAI_RUNTIME_HOME=$(printf '%q' "${repo_root}/.crewai-home") PYTHONPATH=$(printf '%q' "${worker_dir}/src") python -m ai_engine.main"
 
 wait_for_health
 
@@ -157,4 +172,4 @@ campaign_id="$(printf '%s' "${campaign_response}" | python3 -c 'import json,sys;
 printf 'Campaign id: %s\n' "${campaign_id}"
 
 echo "Running Phase 3 smoke validation"
-SEED_TOPIC="${seed_topic}" bash "${repo_root}/scripts/smoke-topic-flow.sh"
+SEED_TOPIC="${seed_topic}" MARKET_INDUSTRY="${market_industry}" bash "${repo_root}/scripts/smoke-topic-flow.sh"
