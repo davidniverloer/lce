@@ -1,0 +1,38 @@
+name: Phase 0 Dev Setup
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  dev-setup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Prepare environment
+        run: cp .env.example .env
+
+      - name: Run Phase 0 CI validation
+        run: bash scripts/ci-dev-setup.sh
