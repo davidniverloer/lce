@@ -116,6 +116,33 @@ OPENAI_BASE_URL=
 
 This Phase 2 slice uses LiteLLM as a direct Python SDK integration only. Proxy deployment, virtual keys, spend controls, and provider governance are intentionally deferred.
 
+## Market intelligence modes
+
+Market discovery and qualification are now environment-driven:
+
+```bash
+LCE_MARKET_MODE=stub|mixed|live
+LCE_DISCOVERY_MODE=stub|live
+LCE_QUALIFICATION_MODE=stub|mixed|live
+LCE_TREND_PROVIDER_MODE=stub|live
+LCE_SOCIAL_PROVIDER_MODE=stub|live
+LCE_SEO_PROVIDER_MODE=stub|live
+```
+
+CI is always deterministic. When `CI=true`, the worker forces all market intelligence providers into stub mode regardless of other env values.
+
+Recommended local live-discovery setup:
+
+```bash
+LCE_DISCOVERY_MODE=live
+LCE_QUALIFICATION_MODE=mixed
+LCE_TREND_PROVIDER_MODE=live
+LCE_SOCIAL_PROVIDER_MODE=live
+LCE_SEO_PROVIDER_MODE=stub
+```
+
+Live discovery currently uses a small Google News RSS-backed adapter, while qualification supports stub, mixed, and live-ready provider modes. DataForSEO remains live-ready but still falls back to deterministic scoring unless stable credentials and a full provider implementation are wired in.
+
 ## Smoke paths
 
 ### Option 1: Full bootstrap in separate macOS Terminal windows
@@ -141,6 +168,74 @@ Service logs are written to:
 
 ```bash
 bash scripts/smoke-topic-flow.sh
+```
+
+Live discovery smoke path outside CI:
+
+```bash
+LCE_DISCOVERY_MODE=live \
+LCE_QUALIFICATION_MODE=mixed \
+LCE_TREND_PROVIDER_MODE=live \
+LCE_SOCIAL_PROVIDER_MODE=live \
+LCE_SEO_PROVIDER_MODE=stub \
+SEED_TOPIC='' \
+MARKET_INDUSTRY='healthcare' \
+bash scripts/smoke-topic-flow.sh
+```
+
+Live SEO smoke path outside CI:
+
+```bash
+LCE_DISCOVERY_MODE=stub \
+LCE_QUALIFICATION_MODE=mixed \
+LCE_SEO_PROVIDER_MODE=live \
+DATAFORSEO_LOGIN=<your-dataforseo-login> \
+DATAFORSEO_PASSWORD=<your-dataforseo-password> \
+DATAFORSEO_LOCATION_CODE=2840 \
+DATAFORSEO_LANGUAGE_CODE=en \
+SEED_TOPIC='ambient ai scribes in healthcare' \
+bash scripts/smoke-topic-flow.sh
+```
+
+This uses DataForSEO API v3 live SEO signals for qualification. If some SEO components fail outside CI, the worker records `mode: "mixed"` and falls back only for those components. If no useful live SEO component succeeds, it records `mode: "stub_fallback"` and uses the deterministic fallback score. For page-level overlap, the worker now tries DataForSEO page intersection on the top two organic SERP URLs with `intersect` first and retries `union` before falling back.
+
+For headline-style discovered topics, the worker derives a small normalized SEO lookup query for DataForSEO while preserving the original topic for persistence and ranking. Inspect:
+- `seoQuery`
+- `rawComponents.normalizedSeoQuery`
+- `componentQueries`
+- `componentModes`
+- `componentFallbackReasons`
+
+in qualified topic metadata to confirm which SEO inputs were live versus fallback.
+
+The enriched live SEO path now combines:
+- DataForSEO v3 keyword overview
+- DataForSEO v3 keyword ideas
+- DataForSEO v3 related keywords
+- DataForSEO v3 SERP competitors
+- DataForSEO v3 top organic SERP results
+- DataForSEO v3 page intersection keywords
+
+and normalizes them into one explainable `seo_score`.
+
+Local bootstrap now waits for RabbitMQ startup before launching the orchestrator and worker, and both runtimes use bounded retry/backoff so transient broker readiness issues are logged as retryable startup conditions rather than hard failures.
+RabbitMQ now uses an explicit named Docker volume, and the local bootstrap removes any stale `lce-rabbitmq` container state before bringing the stack back up.
+
+Market scoring calibration remains env-driven and deterministic in structure:
+- `LCE_MARKET_TREND_WEIGHT`
+- `LCE_MARKET_SOCIAL_WEIGHT`
+- `LCE_MARKET_SEO_WEIGHT`
+- `LCE_MARKET_MIN_QUALIFIED_SCORE`
+- `LCE_MARKET_NOVELTY_THRESHOLD`
+- `LCE_MARKET_MAX_NOVELTY_PENALTY`
+
+Validate the Market Intelligence score model locally with:
+
+```bash
+PYTHONPATH=$PWD/workers/ai-engine/src workers/ai-engine/.venv/bin/python -m pytest \
+  workers/ai-engine/tests/test_market_modes.py \
+  workers/ai-engine/tests/test_dataforseo_adapter.py \
+  workers/ai-engine/tests/test_market_scoring_pipeline.py
 ```
 
 ## Manual API flow

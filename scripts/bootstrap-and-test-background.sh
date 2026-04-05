@@ -13,6 +13,9 @@ base_url="${BASE_URL:-http://localhost:3000}"
 organization_name="${ORGANIZATION_NAME:-Demo Org}"
 campaign_name="${CAMPAIGN_NAME:-Spring Launch}"
 seed_topic="${SEED_TOPIC:-deterministic content operations}"
+market_industry="${MARKET_INDUSTRY:-}"
+content_language="${CONTENT_LANGUAGE:-English}"
+geo_context="${GEO_CONTEXT:-}"
 docker_compose_file="${repo_root}/infra/docker/docker-compose.yml"
 orchestrator_log="${logs_dir}/orchestrator.log"
 worker_log="${logs_dir}/ai-engine.log"
@@ -49,12 +52,22 @@ stop_existing_processes() {
   fi
 
   local worker_pids
-  worker_pids="$(pgrep -f 'python -m ai_engine.main' || true)"
+  worker_pids="$(pgrep -f 'ai_engine.main' || true)"
 
   if [ -n "${worker_pids}" ]; then
     echo "Stopping existing ai_engine worker process(es): ${worker_pids}"
     kill ${worker_pids} >/dev/null 2>&1 || true
   fi
+
+  local orchestrator_pids
+  orchestrator_pids="$(pgrep -f 'pnpm --filter @lce/orchestrator dev|tsx watch src/server.ts' || true)"
+
+  if [ -n "${orchestrator_pids}" ]; then
+    echo "Stopping existing orchestrator process(es): ${orchestrator_pids}"
+    kill ${orchestrator_pids} >/dev/null 2>&1 || true
+  fi
+
+  sleep 1
 }
 
 cleanup() {
@@ -101,6 +114,26 @@ wait_for_health() {
   return 1
 }
 
+wait_for_rabbitmq() {
+  local attempts=30
+  local delay=2
+
+  for attempt in $(seq 1 "${attempts}"); do
+    if docker exec lce-rabbitmq rabbitmqctl await_startup >/dev/null 2>&1; then
+      echo "RabbitMQ is ready"
+      return 0
+    fi
+
+    if [ "${attempt}" -lt "${attempts}" ]; then
+      printf 'Waiting for RabbitMQ readiness (%s/%s)\n' "${attempt}" "${attempts}"
+      sleep "${delay}"
+    fi
+  done
+
+  echo "Timed out waiting for RabbitMQ readiness" >&2
+  return 1
+}
+
 require_command cp
 require_command pnpm
 require_command curl
@@ -127,6 +160,9 @@ set -a
 source "${repo_root}/.env"
 set +a
 
+RABBITMQ_GENERATION_QUEUE="${RABBITMQ_GENERATION_QUEUE:-${RABBITMQ_TOPIC_GENERATION_QUEUE:-content.generation-requests}}"
+export RABBITMQ_GENERATION_QUEUE
+
 echo "Installing Node dependencies"
 CI=true pnpm install
 
@@ -142,7 +178,10 @@ echo "Generating Prisma client"
 pnpm db:generate
 
 echo "Starting Docker infrastructure"
+docker compose -f "${docker_compose_file}" down -v >/dev/null 2>&1 || true
+docker rm -fv lce-rabbitmq >/dev/null 2>&1 || true
 docker compose -f "${docker_compose_file}" up -d
+wait_for_rabbitmq
 
 echo "Applying database migration"
 pnpm db:migrate
@@ -187,4 +226,4 @@ campaign_id="$(printf '%s' "${campaign_response}" | python3 -c 'import json,sys;
 printf 'Campaign id: %s\n' "${campaign_id}"
 
 echo "Running Phase 3 smoke validation"
-SEED_TOPIC="${seed_topic}" bash "${repo_root}/scripts/smoke-topic-flow.sh"
+SEED_TOPIC="${seed_topic}" MARKET_INDUSTRY="${market_industry}" CONTENT_LANGUAGE="${content_language}" GEO_CONTEXT="${geo_context}" bash "${repo_root}/scripts/smoke-topic-flow.sh"

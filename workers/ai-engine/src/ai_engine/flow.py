@@ -31,6 +31,8 @@ class ArticleGenerationState(FlowState):
     task_id: str
     topic: str
     target_audience: str | None = None
+    content_language: str | None = None
+    geo_context: str | None = None
     output_formats: list[str] = Field(default_factory=list)
     qualified_topic_id: str | None = None
     blueprint_id: str | None = None
@@ -53,6 +55,8 @@ class GenerationRequest:
     task_id: str
     topic: str
     target_audience: str | None
+    content_language: str | None
+    geo_context: str | None
     output_formats: list[str]
     qualified_topic_id: str | None = None
     blueprint_id: str | None = None
@@ -81,6 +85,16 @@ def _hydrate_blueprint(raw_blueprint: dict | None) -> BlueprintOutput | None:
             if raw_blueprint.get("targetAudience") is not None
             else None
         ),
+        content_language=(
+            str(raw_blueprint["contentLanguage"])
+            if raw_blueprint.get("contentLanguage") is not None
+            else None
+        ),
+        geo_context=(
+            str(raw_blueprint["geoContext"])
+            if raw_blueprint.get("geoContext") is not None
+            else None
+        ),
         angle=str(raw_blueprint["angle"]),
         sections=[str(item) for item in raw_blueprint.get("sections", [])],
         style_guidance=str(raw_blueprint["styleGuidance"]),
@@ -103,6 +117,8 @@ class ArticleGenerationFlow(Flow[ArticleGenerationState]):
             task_id=request.task_id,
             topic=request.topic,
             target_audience=request.target_audience,
+            content_language=request.content_language,
+            geo_context=request.geo_context,
             output_formats=request.output_formats,
             qualified_topic_id=request.qualified_topic_id,
             blueprint_id=request.blueprint_id,
@@ -138,6 +154,8 @@ class ArticleGenerationFlow(Flow[ArticleGenerationState]):
         draft = self._content_agent.generate(
             topic=self.state.topic,
             target_audience=self.state.target_audience,
+            content_language=self.state.content_language,
+            geo_context=self.state.geo_context,
             revision_number=0,
             qa_feedback=None,
             blueprint=self._blueprint(),
@@ -159,6 +177,8 @@ class ArticleGenerationFlow(Flow[ArticleGenerationState]):
         draft = self._content_agent.generate(
             topic=self.state.topic,
             target_audience=self.state.target_audience,
+            content_language=self.state.content_language,
+            geo_context=self.state.geo_context,
             revision_number=1,
             qa_feedback=self.state.qa_feedback,
             blueprint=self._blueprint(),
@@ -233,7 +253,12 @@ class ArticleGenerationFlow(Flow[ArticleGenerationState]):
             title=self.state.current_title or "Untitled Draft",
             body=self.state.current_body or "",
         )
-        review = self._qa_agent.review(draft, self._blueprint())
+        review = self._qa_agent.review(
+            draft,
+            self._blueprint(),
+            content_language=self.state.content_language,
+            geo_context=self.state.geo_context,
+        )
         self.state.qa_passed = review.passed
         self.state.qa_feedback = review.feedback
         self.state.status = "approved" if review.passed else "revision_requested"

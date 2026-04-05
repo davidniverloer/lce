@@ -68,6 +68,8 @@ const createGenerationRequestedEvent = (
   taskId: string,
   topic: string,
   targetAudience: string | null,
+  contentLanguage: string | null,
+  geoContext: string | null,
   outputFormats: string[],
   blueprintId?: string | null,
   blueprint?: ArticleBlueprintSnapshot | null,
@@ -82,6 +84,8 @@ const createGenerationRequestedEvent = (
     taskId,
     topic,
     targetAudience,
+    contentLanguage,
+    geoContext,
     outputFormats,
     blueprintId: blueprintId ?? null,
     blueprint: blueprint ?? null,
@@ -92,8 +96,12 @@ const createTopicGenerationRequestedEvent = (
   organizationId: string,
   campaignId: string,
   analysisRequestId: string,
-  seedTopic: string,
+  seedTopic: string | null,
+  industry: string | null,
+  autoDiscover: boolean,
   targetAudience: string | null,
+  contentLanguage: string | null,
+  geoContext: string | null,
 ): TopicGenerationRequestedEvent => ({
   eventId: randomUUID(),
   eventType: TOPIC_GENERATION_REQUESTED_EVENT_TYPE,
@@ -104,7 +112,11 @@ const createTopicGenerationRequestedEvent = (
     campaignId,
     analysisRequestId,
     seedTopic,
+    industry,
+    autoDiscover,
     targetAudience,
+    contentLanguage,
+    geoContext,
   },
 });
 
@@ -363,6 +375,16 @@ export const createApp = () => {
     }
 
     try {
+      const analysisRequest = await prismaExtended.marketAnalysisRequest.findFirst({
+        where: {
+          organizationId,
+          campaignId,
+        },
+        orderBy: {
+          createdAt: "desc",
+        },
+      });
+
       const topics = await prismaExtended.qualifiedTopic.findMany({
         where: {
           organizationId,
@@ -374,6 +396,19 @@ export const createApp = () => {
       res.json({
         organizationId,
         campaignId,
+        analysisRequest: analysisRequest
+          ? {
+              analysisRequestId: analysisRequest.id,
+              seedTopic: analysisRequest.seedTopic,
+              industry: analysisRequest.industry,
+              autoDiscover: analysisRequest.autoDiscover,
+              discoveredTopics: analysisRequest.discoveredTopics,
+              targetAudience: analysisRequest.targetAudience,
+              contentLanguage: analysisRequest.contentLanguage,
+              geoContext: analysisRequest.geoContext,
+              status: analysisRequest.status,
+            }
+          : null,
         qualifiedTopics: topics.map((topic: any) => ({
           id: topic.id,
           topic: topic.topic,
@@ -382,6 +417,7 @@ export const createApp = () => {
           socialScore: topic.socialScore,
           seoScore: topic.seoScore,
           qualificationNote: topic.qualificationNote,
+          sourceMetadata: topic.sourceMetadata,
         })),
       });
     } catch (error) {
@@ -393,11 +429,15 @@ export const createApp = () => {
     const organizationId = getString(req.body?.organizationId);
     const campaignId = getString(req.body?.campaignId);
     const seedTopic = getString(req.body?.seedTopic);
+    const industry = getString(req.body?.industry);
     const targetAudience = getString(req.body?.targetAudience);
+    const contentLanguage = getString(req.body?.contentLanguage);
+    const geoContext = getString(req.body?.geoContext);
+    const autoDiscover = !seedTopic;
 
-    if (!organizationId || !campaignId || !seedTopic) {
+    if (!organizationId || !campaignId || (!seedTopic && !industry)) {
       res.status(400).json({
-        error: "organizationId, campaignId, and seedTopic are required",
+        error: "organizationId, campaignId, and either seedTopic or industry are required",
       });
       return;
     }
@@ -420,7 +460,11 @@ export const createApp = () => {
             organizationId,
             campaignId,
             seedTopic,
+            industry,
+            autoDiscover,
             targetAudience,
+            contentLanguage,
+            geoContext,
             status: "queued",
           },
         });
@@ -430,7 +474,11 @@ export const createApp = () => {
           campaignId,
           createdRequest.id,
           seedTopic,
+          industry,
+          autoDiscover,
           targetAudience,
+          contentLanguage,
+          geoContext,
         );
 
         await tx.outboxEvent.create({
@@ -454,6 +502,11 @@ export const createApp = () => {
         analysisRequestId: analysisRequest.id,
         organizationId: analysisRequest.organizationId,
         campaignId: analysisRequest.campaignId,
+        seedTopic: analysisRequest.seedTopic,
+        industry: analysisRequest.industry,
+        autoDiscover: analysisRequest.autoDiscover,
+        contentLanguage: analysisRequest.contentLanguage,
+        geoContext: analysisRequest.geoContext,
         status: analysisRequest.status,
       });
     } catch (error) {
@@ -573,6 +626,7 @@ export const createApp = () => {
           socialScore: topic.socialScore,
           seoScore: topic.seoScore,
           qualificationNote: topic.qualificationNote,
+          sourceMetadata: topic.sourceMetadata,
         })),
       });
     } catch (error) {
@@ -688,6 +742,8 @@ export const createApp = () => {
     const campaignId = getString(req.body?.campaignId);
     const topic = getString(req.body?.topic);
     const targetAudience = getString(req.body?.targetAudience);
+    const contentLanguage = getString(req.body?.contentLanguage);
+    const geoContext = getString(req.body?.geoContext);
     const outputFormats =
       getStringArray(req.body?.outputFormats) ?? ["markdown_article"];
 
@@ -717,6 +773,8 @@ export const createApp = () => {
             campaignId,
             topic,
             targetAudience,
+            contentLanguage,
+            geoContext,
             outputFormats,
             status: "queued",
           },
@@ -728,6 +786,8 @@ export const createApp = () => {
           createdTask.id,
           topic,
           targetAudience,
+          contentLanguage,
+          geoContext,
           outputFormats,
         );
 
@@ -752,6 +812,8 @@ export const createApp = () => {
         taskId: task.id,
         organizationId: task.organizationId,
         campaignId: task.campaignId,
+        contentLanguage: task.contentLanguage,
+        geoContext: task.geoContext,
         status: task.status,
       });
     } catch (error) {
@@ -780,6 +842,8 @@ export const createApp = () => {
         campaignId: task.campaignId,
         topic: task.topic,
         targetAudience: task.targetAudience,
+        contentLanguage: task.contentLanguage,
+        geoContext: task.geoContext,
         outputFormats: task.outputFormats,
         blueprintId: task.blueprintId,
         blueprint: task.blueprintJson,

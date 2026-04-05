@@ -19,8 +19,16 @@ class MarketAnalysisRequest(Base):
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True)
     organization_id: Mapped[str] = mapped_column(UUID(as_uuid=False), nullable=False)
     campaign_id: Mapped[str] = mapped_column(UUID(as_uuid=False), nullable=False)
-    seed_topic: Mapped[str] = mapped_column(Text, nullable=False)
+    seed_topic: Mapped[str | None] = mapped_column(Text, nullable=True)
+    industry: Mapped[str | None] = mapped_column(Text, nullable=True)
+    auto_discover: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    discovered_topics: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JSONB,
+        nullable=True,
+    )
     target_audience: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content_language: Mapped[str | None] = mapped_column(Text, nullable=True)
+    geo_context: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=False),
@@ -62,6 +70,8 @@ class GenerationTask(Base):
     campaign_id: Mapped[str] = mapped_column(UUID(as_uuid=False), nullable=False)
     topic: Mapped[str] = mapped_column(Text, nullable=False)
     target_audience: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content_language: Mapped[str | None] = mapped_column(Text, nullable=True)
+    geo_context: Mapped[str | None] = mapped_column(Text, nullable=True)
     output_formats: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False)
     qualified_topic_id: Mapped[str | None] = mapped_column(
@@ -181,7 +191,10 @@ class ArticleBlueprint(Base):
     organization_id: Mapped[str] = mapped_column(UUID(as_uuid=False), nullable=False)
     campaign_id: Mapped[str] = mapped_column(UUID(as_uuid=False), nullable=False)
     qualified_topic_id: Mapped[str] = mapped_column(UUID(as_uuid=False), nullable=False)
-    sitemap_ingestion_id: Mapped[str] = mapped_column(UUID(as_uuid=False), nullable=False)
+    sitemap_ingestion_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False),
+        nullable=True,
+    )
     topic: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False)
     blueprint_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)

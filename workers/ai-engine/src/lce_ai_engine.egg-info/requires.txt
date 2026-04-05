@@ -5,3 +5,4 @@ psycopg[binary]<4.0.0,>=3.2.6
 pydantic<3.0.0,>=2.11.0
 python-dotenv<2.0.0,>=1.1.1
 SQLAlchemy<3.0.0,>=2.0.40
+pytest<9.0.0,>=8.4.0

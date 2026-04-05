@@ -43,8 +43,13 @@ model MarketAnalysisRequest {
   id             String   @id @default(uuid()) @db.Uuid
   organizationId String   @map("organization_id") @db.Uuid
   campaignId     String   @map("campaign_id") @db.Uuid
-  seedTopic      String   @map("seed_topic")
+  seedTopic      String?  @map("seed_topic")
+  industry       String?
+  autoDiscover   Boolean  @default(false) @map("auto_discover")
+  discoveredTopics Json?  @map("discovered_topics")
   targetAudience String?  @map("target_audience")
+  contentLanguage String? @map("content_language")
+  geoContext     String?  @map("geo_context")
   status         String
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
@@ -84,6 +89,8 @@ model GenerationTask {
   campaignId       String   @map("campaign_id") @db.Uuid
   topic            String
   targetAudience   String?  @map("target_audience")
+  contentLanguage  String?  @map("content_language")
+  geoContext       String?  @map("geo_context")
   outputFormats    Json     @map("output_formats")
   status           String
   qualifiedTopicId String?  @map("qualified_topic_id") @db.Uuid
@@ -201,7 +208,7 @@ model ArticleBlueprint {
   organizationId     String   @map("organization_id") @db.Uuid
   campaignId         String   @map("campaign_id") @db.Uuid
   qualifiedTopicId   String   @map("qualified_topic_id") @db.Uuid
-  sitemapIngestionId String   @map("sitemap_ingestion_id") @db.Uuid
+  sitemapIngestionId String?  @map("sitemap_ingestion_id") @db.Uuid
   topic              String
   status             String
   blueprintJson      Json     @map("blueprint_json")

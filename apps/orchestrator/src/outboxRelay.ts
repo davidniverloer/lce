@@ -16,6 +16,8 @@ export class OutboxRelay {
   private connection: ChannelModel | null = null;
   private intervalId: NodeJS.Timeout | null = null;
   private isPolling = false;
+  private brokerRetryDelayMs = 1_000;
+  private brokerRetryAt = 0;
 
   constructor(private readonly prisma: PrismaClient) {}
 
@@ -45,6 +47,10 @@ export class OutboxRelay {
 
   async flush(): Promise<void> {
     if (this.isPolling) {
+      return;
+    }
+
+    if (Date.now() < this.brokerRetryAt) {
       return;
     }
 
@@ -86,7 +92,15 @@ export class OutboxRelay {
         });
       }
     } catch (error) {
-      console.error("Outbox relay flush failed", error);
+      if (isRetryableBrokerError(error)) {
+        console.warn(
+          `Outbox relay broker not ready; retrying in ${this.brokerRetryDelayMs}ms (${formatBrokerError(error)})`,
+        );
+        this.brokerRetryAt = Date.now() + this.brokerRetryDelayMs;
+        this.brokerRetryDelayMs = Math.min(this.brokerRetryDelayMs * 2, 10_000);
+      } else {
+        console.error("Outbox relay flush failed", error);
+      }
       await this.resetBroker();
     } finally {
       this.isPolling = false;
@@ -128,6 +142,8 @@ export class OutboxRelay {
       );
     }
     this.channel = channel;
+    this.brokerRetryDelayMs = 1_000;
+    this.brokerRetryAt = 0;
   }
 
   private async resetBroker(): Promise<void> {
@@ -136,4 +152,29 @@ export class OutboxRelay {
     this.channel = null;
     this.connection = null;
   }
+}
+
+function isRetryableBrokerError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return (
+    "code" in error
+    || /ECONNRESET|ECONNREFUSED|Socket closed abruptly|Channel ended|Connection closing/i.test(
+      error.message,
+    )
+  );
+}
+
+function formatBrokerError(error: unknown): string {
+  if (error instanceof Error) {
+    const code =
+      typeof (error as Error & { code?: unknown }).code === "string"
+        ? (error as Error & { code?: string }).code
+        : undefined;
+    return code ? `${code}: ${error.message}` : error.message;
+  }
+
+  return String(error);
 }

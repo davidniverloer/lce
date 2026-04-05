@@ -3,6 +3,7 @@ src/ai_engine/__init__.py
 src/ai_engine/agents.py
 src/ai_engine/config.py
 src/ai_engine/consumer.py
+src/ai_engine/dataforseo.py
 src/ai_engine/db.py
 src/ai_engine/flow.py
 src/ai_engine/handler.py
@@ -15,3 +16,6 @@ src/lce_ai_engine.egg-info/SOURCES.txt
 src/lce_ai_engine.egg-info/dependency_links.txt
 src/lce_ai_engine.egg-info/requires.txt
 src/lce_ai_engine.egg-info/top_level.txt
+tests/test_dataforseo_adapter.py
+tests/test_market_modes.py
+tests/test_market_scoring_pipeline.py
