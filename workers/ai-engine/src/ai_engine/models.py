@@ -191,7 +191,10 @@ class ArticleBlueprint(Base):
     organization_id: Mapped[str] = mapped_column(UUID(as_uuid=False), nullable=False)
     campaign_id: Mapped[str] = mapped_column(UUID(as_uuid=False), nullable=False)
     qualified_topic_id: Mapped[str] = mapped_column(UUID(as_uuid=False), nullable=False)
-    sitemap_ingestion_id: Mapped[str] = mapped_column(UUID(as_uuid=False), nullable=False)
+    sitemap_ingestion_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False),
+        nullable=True,
+    )
     topic: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False)
     blueprint_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)

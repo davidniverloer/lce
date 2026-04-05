@@ -5,6 +5,7 @@ import logging
 import time
 
 import pika
+from pika import exceptions as pika_exceptions
 from pika.adapters.blocking_connection import BlockingChannel
 from pika.spec import Basic, BasicProperties
 from sqlalchemy.orm import sessionmaker
@@ -17,6 +18,8 @@ from .handler import (
 from .llm import LLMProvider
 
 LOGGER = logging.getLogger(__name__)
+INITIAL_BROKER_RETRY_SECONDS = 1.0
+MAX_BROKER_RETRY_SECONDS = 10.0
 
 
 class IntegrationEventConsumer:
@@ -31,17 +34,35 @@ class IntegrationEventConsumer:
         self._llm_provider = llm_provider
 
     def run_forever(self) -> None:
+        retry_delay = INITIAL_BROKER_RETRY_SECONDS
         while True:
             try:
                 self._consume()
+                retry_delay = INITIAL_BROKER_RETRY_SECONDS
             except KeyboardInterrupt:
                 raise
+            except pika_exceptions.AMQPConnectionError as exc:
+                LOGGER.warning(
+                    "RabbitMQ not ready for ai-engine worker; retrying in %.1f seconds (%s)",
+                    retry_delay,
+                    exc,
+                )
+                time.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, MAX_BROKER_RETRY_SECONDS)
             except Exception:
-                LOGGER.exception("Worker loop failed; retrying in 5 seconds")
-                time.sleep(5)
+                LOGGER.exception(
+                    "Worker loop failed unexpectedly; retrying in %.1f seconds",
+                    retry_delay,
+                )
+                time.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, MAX_BROKER_RETRY_SECONDS)
 
     def _consume(self) -> None:
         parameters = pika.URLParameters(self._settings.rabbitmq_url)
+        parameters.connection_attempts = 3
+        parameters.retry_delay = 2
+        parameters.socket_timeout = 5
+        parameters.blocked_connection_timeout = 15
         connection = pika.BlockingConnection(parameters)
         channel = connection.channel()
 

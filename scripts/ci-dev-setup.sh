@@ -147,7 +147,12 @@ OUTBOX_POLL_INTERVAL_MS=$(quote_for_shell "$(read_env_or_default OUTBOX_POLL_INT
 ORCHESTRATOR_PORT=$(quote_for_shell "$(read_env_or_default ORCHESTRATOR_PORT 3000)")
 REDIS_URL=$(quote_for_shell "$(read_env_or_default REDIS_URL redis://localhost:6379)")
 AI_ENGINE_LLM_MODE='stub'
-MARKET_SIGNAL_MODE='stub'
+LCE_MARKET_MODE='stub'
+LCE_DISCOVERY_MODE='stub'
+LCE_QUALIFICATION_MODE='stub'
+LCE_TREND_PROVIDER_MODE='stub'
+LCE_SOCIAL_PROVIDER_MODE='stub'
+LCE_SEO_PROVIDER_MODE='stub'
 CREWAI_RUNTIME_HOME=$(quote_for_shell "${repo_root}/.crewai-home")
 EOF
 }

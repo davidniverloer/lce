@@ -114,6 +114,26 @@ wait_for_health() {
   return 1
 }
 
+wait_for_rabbitmq() {
+  local attempts=30
+  local delay=2
+
+  for attempt in $(seq 1 "${attempts}"); do
+    if docker exec lce-rabbitmq rabbitmqctl await_startup >/dev/null 2>&1; then
+      echo "RabbitMQ is ready"
+      return 0
+    fi
+
+    if [ "${attempt}" -lt "${attempts}" ]; then
+      printf 'Waiting for RabbitMQ readiness (%s/%s)\n' "${attempt}" "${attempts}"
+      sleep "${delay}"
+    fi
+  done
+
+  echo "Timed out waiting for RabbitMQ readiness" >&2
+  return 1
+}
+
 require_command cp
 require_command pnpm
 require_command curl
@@ -159,7 +179,9 @@ pnpm db:generate
 
 echo "Starting Docker infrastructure"
 docker compose -f "${docker_compose_file}" down -v >/dev/null 2>&1 || true
+docker rm -fv lce-rabbitmq >/dev/null 2>&1 || true
 docker compose -f "${docker_compose_file}" up -d
+wait_for_rabbitmq
 
 echo "Applying database migration"
 pnpm db:migrate

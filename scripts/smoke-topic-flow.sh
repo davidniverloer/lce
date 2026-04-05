@@ -12,6 +12,7 @@ geo_context="${GEO_CONTEXT:-}"
 max_attempts="${MAX_ATTEMPTS:-25}"
 poll_interval_seconds="${POLL_INTERVAL_SECONDS:-2}"
 sitemap_url="${SITEMAP_URL:-fixture://default-sitemap}"
+skip_sitemap="${SKIP_SITEMAP:-0}"
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -89,12 +90,17 @@ market_response="$(curl -sS \
 printf 'Market analyze response: %s\n' "${market_response}"
 analysis_request_id="$(printf '%s' "${market_response}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["analysisRequestId"])')"
 
-sitemap_response="$(curl -sS \
-  -X POST "${base_url}/sitemap/ingest" \
-  -H "content-type: application/json" \
-  -d "{\"organizationId\":\"${organization_id}\",\"campaignId\":\"${campaign_id}\",\"sitemapUrl\":\"${sitemap_url}\"}")"
-printf 'Sitemap response: %s\n' "${sitemap_response}"
-sitemap_ingestion_id="$(printf '%s' "${sitemap_response}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["sitemapIngestionId"])')"
+if [ "${skip_sitemap}" = "1" ]; then
+  echo "Skipping sitemap ingestion for optional-sitemap validation"
+  sitemap_ingestion_id=""
+else
+  sitemap_response="$(curl -sS \
+    -X POST "${base_url}/sitemap/ingest" \
+    -H "content-type: application/json" \
+    -d "{\"organizationId\":\"${organization_id}\",\"campaignId\":\"${campaign_id}\",\"sitemapUrl\":\"${sitemap_url}\"}")"
+  printf 'Sitemap response: %s\n' "${sitemap_response}"
+  sitemap_ingestion_id="$(printf '%s' "${sitemap_response}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["sitemapIngestionId"])')"
+fi
 
 for attempt in $(seq 1 "${max_attempts}"); do
   qualified_topics_response="$(curl -sS "${base_url}/market/analyze?organizationId=${organization_id}&campaignId=${campaign_id}")"
@@ -108,8 +114,13 @@ for attempt in $(seq 1 "${max_attempts}"); do
   task_id="$(printf '%s' "${tasks_response}" | json_first_task_field id)"
   task_status="$(printf '%s' "${tasks_response}" | json_first_task_field status)"
 
+  indexed_pages_ready=0
+  if [ "${skip_sitemap}" = "1" ] || [ "${indexed_page_count:-0}" -ge 1 ]; then
+    indexed_pages_ready=1
+  fi
+
   if [ "${qualified_topic_count:-0}" -ge 1 ] && \
-     [ "${indexed_page_count:-0}" -ge 1 ] && \
+     [ "${indexed_pages_ready}" -eq 1 ] && \
      [ "${blueprint_count:-0}" -ge 1 ] && \
      [ -n "${task_id:-}" ] && \
      [ "${task_status:-}" = "completed" ]; then

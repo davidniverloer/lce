@@ -208,7 +208,7 @@ model ArticleBlueprint {
   organizationId     String   @map("organization_id") @db.Uuid
   campaignId         String   @map("campaign_id") @db.Uuid
   qualifiedTopicId   String   @map("qualified_topic_id") @db.Uuid
-  sitemapIngestionId String   @map("sitemap_ingestion_id") @db.Uuid
+  sitemapIngestionId String?  @map("sitemap_ingestion_id") @db.Uuid
   topic              String
   status             String
   blueprintJson      Json     @map("blueprint_json")

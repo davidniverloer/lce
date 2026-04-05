@@ -20,9 +20,10 @@ def main() -> None:
 
     settings = get_settings()
     logging.getLogger(__name__).info(
-        "Starting ai-engine worker llm_mode=%s market_signal_mode=%s llm_model=%s",
+        "Starting ai-engine worker llm_mode=%s discovery_mode=%s qualification_mode=%s llm_model=%s",
         settings.llm_mode,
-        settings.market_signal_mode,
+        settings.discovery_mode,
+        settings.qualification_mode,
         settings.llm_model,
     )
     session_factory = create_session_factory(settings.database_url)

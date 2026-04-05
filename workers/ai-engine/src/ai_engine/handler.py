@@ -44,8 +44,6 @@ TOPIC_GENERATION_REQUESTED = "TopicGenerationRequested"
 TOPIC_QUALIFIED = "TopicQualified"
 SITEMAP_UPDATED = "SitemapUpdated"
 BLUEPRINT_VALIDATED = "BlueprintValidated"
-SEMANTIC_SIMILARITY_THRESHOLD = 0.55
-MAX_NOVELTY_PENALTY = 25.0
 
 
 @dataclass(frozen=True)
@@ -94,7 +92,7 @@ class BlueprintValidatedEvent(BaseEvent):
     organization_id: str
     campaign_id: str
     qualified_topic_id: str
-    sitemap_ingestion_id: str
+    sitemap_ingestion_id: str | None
     blueprint_id: str
 
 
@@ -218,22 +216,20 @@ def parse_event(raw: dict) -> BaseEvent | GenerationRequestedEvent:
         )
 
     if event_type == BLUEPRINT_VALIDATED:
-        required = (
-            "organizationId",
-            "campaignId",
-            "qualifiedTopicId",
-            "sitemapIngestionId",
-            "blueprintId",
-        )
+        required = ("organizationId", "campaignId", "qualifiedTopicId", "blueprintId")
         for field in required:
             if not isinstance(payload.get(field), str) or not str(payload[field]).strip():
                 raise ValueError(f"Missing required payload field: {field}")
+
+        sitemap_ingestion_id = payload.get("sitemapIngestionId")
+        if sitemap_ingestion_id is not None and not isinstance(sitemap_ingestion_id, str):
+            raise ValueError("sitemapIngestionId must be a string or null")
 
         return BlueprintValidatedEvent(
             organization_id=str(payload["organizationId"]),
             campaign_id=str(payload["campaignId"]),
             qualified_topic_id=str(payload["qualifiedTopicId"]),
-            sitemap_ingestion_id=str(payload["sitemapIngestionId"]),
+            sitemap_ingestion_id=sitemap_ingestion_id,
             blueprint_id=str(payload["blueprintId"]),
             **common_kwargs,
         )
@@ -458,6 +454,7 @@ def _prior_topic_and_article_texts(
 def _apply_novelty_rules(
     *,
     session: Session,
+    settings: Settings,
     organization_id: str,
     candidates: list[QualifiedTopicCandidate],
 ) -> list[QualifiedTopicCandidate]:
@@ -489,12 +486,18 @@ def _apply_novelty_rules(
                 closest_match = prior_text[:160]
 
         novelty_penalty = 0.0
-        if similarity >= SEMANTIC_SIMILARITY_THRESHOLD:
+        if similarity >= settings.market_novelty_threshold:
             normalized_similarity = (
-                (similarity - SEMANTIC_SIMILARITY_THRESHOLD)
-                / (1.0 - SEMANTIC_SIMILARITY_THRESHOLD)
+                (similarity - settings.market_novelty_threshold)
+                / (1.0 - settings.market_novelty_threshold)
             )
-            novelty_penalty = round(min(MAX_NOVELTY_PENALTY, normalized_similarity * MAX_NOVELTY_PENALTY), 2)
+            novelty_penalty = round(
+                min(
+                    settings.market_max_novelty_penalty,
+                    normalized_similarity * settings.market_max_novelty_penalty,
+                ),
+                2,
+            )
 
         adjusted_score = round(max(0.0, candidate.total_score - novelty_penalty), 2)
         reranked_candidates.append(
@@ -515,16 +518,76 @@ def _apply_novelty_rules(
                         "semanticSimilarity": similarity,
                         "noveltyPenalty": novelty_penalty,
                         "closestPriorMatch": closest_match,
+                        "threshold": settings.market_novelty_threshold,
+                        "maxPenalty": settings.market_max_novelty_penalty,
                     },
+                    "rawWeightedScore": candidate.total_score,
+                    "adjustedScore": adjusted_score,
                 },
             )
         )
 
-    return sorted(
+    sorted_candidates = sorted(
         reranked_candidates,
         key=lambda candidate: candidate.total_score,
         reverse=True,
     )
+    annotated: list[QualifiedTopicCandidate] = []
+    for index, candidate in enumerate(sorted_candidates, start=1):
+        next_score = (
+            sorted_candidates[index].total_score
+            if index < len(sorted_candidates)
+            else None
+        )
+        annotated.append(
+            QualifiedTopicCandidate(
+                topic=candidate.topic,
+                trend_score=candidate.trend_score,
+                social_score=candidate.social_score,
+                seo_score=candidate.seo_score,
+                total_score=candidate.total_score,
+                qualification_note=candidate.qualification_note,
+                source_metadata={
+                    **candidate.source_metadata,
+                    "selectionRank": index,
+                    "selectedForBlueprint": index == 1,
+                    "scoreGapToNext": (
+                        round(candidate.total_score - next_score, 2)
+                        if next_score is not None
+                        else None
+                    ),
+                    "selectionValidation": {
+                        "rawWeightedScore": candidate.source_metadata.get("rawWeightedScore")
+                        or candidate.source_metadata.get("weightedScore"),
+                        "adjustedScore": candidate.source_metadata.get("adjustedScore")
+                        or candidate.total_score,
+                        "scoreGapToNext": (
+                            round(candidate.total_score - next_score, 2)
+                            if next_score is not None
+                            else None
+                        ),
+                        "selected": index == 1,
+                    },
+                    "providerSources": [
+                        metadata.get("provider")
+                        for metadata in (
+                            candidate.source_metadata.get("discovery"),
+                            candidate.source_metadata.get("trend"),
+                            candidate.source_metadata.get("social"),
+                            candidate.source_metadata.get("seo"),
+                        )
+                        if isinstance(metadata, dict) and metadata.get("provider")
+                    ],
+                    "discoveryMode": (
+                        candidate.source_metadata.get("discovery", {}).get("mode")
+                        if isinstance(candidate.source_metadata.get("discovery"), dict)
+                        else None
+                    ),
+                },
+            )
+        )
+
+    return annotated
 
 
 def _process_topic_generation_requested(
@@ -540,9 +603,9 @@ def _process_topic_generation_requested(
     request.status = "processing"
 
     crew = MarketAwarenessCrew(
-        discovery_agent=TopicDiscoveryAgent(),
-        trend_agent=TrendAnalysisAgent(),
-        social_agent=SocialListeningAgent(),
+        discovery_agent=TopicDiscoveryAgent(settings),
+        trend_agent=TrendAnalysisAgent(settings),
+        social_agent=SocialListeningAgent(settings),
         seo_agent=SeoGapAgent(settings),
     )
     candidates: list[QualifiedTopicCandidate]
@@ -580,6 +643,7 @@ def _process_topic_generation_requested(
 
     candidates = _apply_novelty_rules(
         session=session,
+        settings=settings,
         organization_id=event.organization_id,
         candidates=candidates,
     )
@@ -654,9 +718,6 @@ def _process_topic_qualified(
         .first()
     )
 
-    if sitemap is None:
-        return
-
     request = session.get(MarketAnalysisRequest, event.analysis_request_id)
     content_language = request.content_language if request else None
     geo_context = request.geo_context if request else None
@@ -721,7 +782,7 @@ def _ensure_blueprint(
     organization_id: str,
     campaign_id: str,
     qualified_topic: QualifiedTopic,
-    sitemap: SitemapIngestion,
+    sitemap: SitemapIngestion | None,
     target_audience: str | None,
     content_language: str | None,
     geo_context: str | None,
@@ -735,29 +796,31 @@ def _ensure_blueprint(
     if existing_blueprint is not None:
         return
 
-    indexed_pages = (
-        session.query(IndexedPage)
-        .filter(
-            IndexedPage.organization_id == organization_id,
-            IndexedPage.sitemap_ingestion_id == sitemap.id,
+    indexed_pages: list[IndexedPage] = []
+    if sitemap is not None:
+        indexed_pages = (
+            session.query(IndexedPage)
+            .filter(
+                IndexedPage.organization_id == organization_id,
+                IndexedPage.sitemap_ingestion_id == sitemap.id,
+            )
+            .order_by(IndexedPage.created_at.asc())
+            .all()
         )
-        .order_by(IndexedPage.created_at.asc())
-        .all()
-    )
-    if not indexed_pages:
-        return
 
-    sitemap_agent = SitemapIngestorAgent()
-    internal_links = sitemap_agent.derive_internal_links(
-        topic=qualified_topic.topic,
-        indexed_pages=[
-            {
-                "url": page.url,
-                "title": page.title,
-            }
-            for page in indexed_pages
-        ],
-    )
+    internal_links = []
+    if indexed_pages:
+        sitemap_agent = SitemapIngestorAgent()
+        internal_links = sitemap_agent.derive_internal_links(
+            topic=qualified_topic.topic,
+            indexed_pages=[
+                {
+                    "url": page.url,
+                    "title": page.title,
+                }
+                for page in indexed_pages
+            ],
+        )
     structure_agent = StructureStyleAgent(llm_provider)
     blueprint = structure_agent.build_blueprint(
         topic=qualified_topic.topic,
@@ -793,7 +856,7 @@ def _ensure_blueprint(
             organization_id=organization_id,
             campaign_id=campaign_id,
             qualified_topic_id=qualified_topic.id,
-            sitemap_ingestion_id=sitemap.id,
+            sitemap_ingestion_id=sitemap.id if sitemap is not None else None,
             topic=qualified_topic.topic,
             status="validated",
             blueprint_json=blueprint_json,
@@ -821,7 +884,7 @@ def _ensure_blueprint(
             "organizationId": organization_id,
             "campaignId": campaign_id,
             "qualifiedTopicId": qualified_topic.id,
-            "sitemapIngestionId": sitemap.id,
+            "sitemapIngestionId": sitemap.id if sitemap is not None else None,
             "blueprintId": blueprint_id,
         },
     )
