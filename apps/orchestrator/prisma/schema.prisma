@@ -22,31 +22,77 @@ model Organization {
 }
 
 model Campaign {
-  id             String       @id @default(uuid()) @db.Uuid
-  organizationId String       @map("organization_id") @db.Uuid
-  name           String
-  createdAt      DateTime     @default(now()) @map("created_at")
-  updatedAt      DateTime     @updatedAt @map("updated_at")
-  organization   Organization @relation(fields: [organizationId], references: [id])
+  id                   String                @id @default(uuid()) @db.Uuid
+  organizationId       String                @map("organization_id") @db.Uuid
+  name                 String
+  createdAt            DateTime              @default(now()) @map("created_at")
+  updatedAt            DateTime              @updatedAt @map("updated_at")
+  organization         Organization          @relation(fields: [organizationId], references: [id])
   generationTasks GenerationTask[]
+  marketAnalysisRequests MarketAnalysisRequest[]
+  qualifiedTopics        QualifiedTopic[]
+  sitemapIngestions      SitemapIngestion[]
+  articleBlueprints      ArticleBlueprint[]
 
   @@index([organizationId, id])
   @@map("campaigns")
   @@schema("campaign")
 }
 
-model GenerationTask {
+model MarketAnalysisRequest {
   id             String   @id @default(uuid()) @db.Uuid
   organizationId String   @map("organization_id") @db.Uuid
   campaignId     String   @map("campaign_id") @db.Uuid
-  topic          String
+  seedTopic      String   @map("seed_topic")
   targetAudience String?  @map("target_audience")
-  outputFormats  Json     @map("output_formats")
   status         String
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
-  completedAt    DateTime? @map("completed_at")
   campaign       Campaign @relation(fields: [campaignId], references: [id])
+
+  @@index([organizationId, id])
+  @@index([campaignId, id])
+  @@map("market_analysis_requests")
+  @@schema("market")
+}
+
+model QualifiedTopic {
+  id                String   @id @default(uuid()) @db.Uuid
+  organizationId    String   @map("organization_id") @db.Uuid
+  campaignId        String   @map("campaign_id") @db.Uuid
+  analysisRequestId String   @map("analysis_request_id") @db.Uuid
+  topic             String
+  score             Float
+  trendScore        Float    @map("trend_score")
+  socialScore       Float    @map("social_score")
+  seoScore          Float    @map("seo_score")
+  qualificationNote String   @map("qualification_note")
+  sourceMetadata    Json     @map("source_metadata")
+  createdAt         DateTime @default(now()) @map("created_at")
+  campaign          Campaign @relation(fields: [campaignId], references: [id])
+
+  @@index([organizationId, id])
+  @@index([campaignId, score])
+  @@index([analysisRequestId])
+  @@map("qualified_topics")
+  @@schema("market")
+}
+
+model GenerationTask {
+  id               String   @id @default(uuid()) @db.Uuid
+  organizationId   String   @map("organization_id") @db.Uuid
+  campaignId       String   @map("campaign_id") @db.Uuid
+  topic            String
+  targetAudience   String?  @map("target_audience")
+  outputFormats    Json     @map("output_formats")
+  status           String
+  qualifiedTopicId String?  @map("qualified_topic_id") @db.Uuid
+  blueprintId      String?  @map("blueprint_id") @db.Uuid
+  blueprintJson    Json?    @map("blueprint_json")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+  completedAt      DateTime? @map("completed_at")
+  campaign         Campaign @relation(fields: [campaignId], references: [id])
 
   @@index([organizationId, id])
   @@index([campaignId, id])
@@ -117,6 +163,74 @@ model RepositoryArticle {
   @@index([organizationId, id])
   @@map("articles")
   @@schema("repository")
+}
+
+model SitemapIngestion {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  campaignId     String   @map("campaign_id") @db.Uuid
+  sitemapUrl     String   @map("sitemap_url")
+  status         String
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+  campaign       Campaign @relation(fields: [campaignId], references: [id])
+
+  @@index([organizationId, id])
+  @@index([campaignId, id])
+  @@map("sitemap_ingestions")
+  @@schema("content")
+}
+
+model IndexedPage {
+  id                 String   @id @default(uuid()) @db.Uuid
+  organizationId     String   @map("organization_id") @db.Uuid
+  campaignId         String   @map("campaign_id") @db.Uuid
+  sitemapIngestionId String   @map("sitemap_ingestion_id") @db.Uuid
+  url                String
+  title              String
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  @@index([organizationId, sitemapIngestionId])
+  @@index([campaignId, id])
+  @@map("indexed_pages")
+  @@schema("content")
+}
+
+model ArticleBlueprint {
+  id                 String   @id @default(uuid()) @db.Uuid
+  organizationId     String   @map("organization_id") @db.Uuid
+  campaignId         String   @map("campaign_id") @db.Uuid
+  qualifiedTopicId   String   @map("qualified_topic_id") @db.Uuid
+  sitemapIngestionId String   @map("sitemap_ingestion_id") @db.Uuid
+  topic              String
+  status             String
+  blueprintJson      Json     @map("blueprint_json")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+  campaign           Campaign @relation(fields: [campaignId], references: [id])
+
+  @@unique([qualifiedTopicId])
+  @@index([organizationId, id])
+  @@index([campaignId, id])
+  @@map("article_blueprints")
+  @@schema("content")
+}
+
+model InternalLink {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  campaignId     String   @map("campaign_id") @db.Uuid
+  blueprintId    String   @map("blueprint_id") @db.Uuid
+  url            String
+  title          String
+  anchorText     String   @map("anchor_text")
+  rationale      String
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([organizationId, blueprintId])
+  @@index([campaignId, id])
+  @@map("internal_links")
+  @@schema("content")
 }
 
 model OutboxEvent {

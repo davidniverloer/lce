@@ -7,6 +7,8 @@ worker_dir="${repo_root}/workers/ai-engine"
 venv_dir="${worker_dir}/.venv"
 docker_compose_file="${repo_root}/infra/docker/docker-compose.yml"
 python_bin=""
+ci_env_file="${repo_root}/.env.ci.$$"
+lock_dir="${repo_root}/.ci-dev-setup.lock"
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -25,6 +27,24 @@ resolve_python_bin() {
 
   echo "Missing required Python interpreter (expected python3.11+)." >&2
   exit 1
+}
+
+stop_existing_processes() {
+  local port_pids
+  port_pids="$(lsof -ti tcp:3000 || true)"
+
+  if [ -n "${port_pids}" ]; then
+    echo "Stopping existing process(es) on port 3000: ${port_pids}"
+    kill ${port_pids} >/dev/null 2>&1 || true
+  fi
+
+  local worker_pids
+  worker_pids="$(pgrep -f 'python -m ai_engine.main' || true)"
+
+  if [ -n "${worker_pids}" ]; then
+    echo "Stopping existing ai_engine worker process(es): ${worker_pids}"
+    kill ${worker_pids} >/dev/null 2>&1 || true
+  fi
 }
 
 wait_for_url() {
@@ -66,25 +86,104 @@ cleanup() {
     docker compose -f "${docker_compose_file}" down -v >/dev/null 2>&1 || true
   fi
 
+  rm -f "${ci_env_file}"
+  rmdir "${lock_dir}" >/dev/null 2>&1 || true
+
   exit "${exit_code}"
+}
+
+read_env_value() {
+  local key="$1"
+  python3 - "$repo_root/.env" "$key" <<'PY'
+import pathlib
+import sys
+
+env_path = pathlib.Path(sys.argv[1])
+key = sys.argv[2]
+
+if not env_path.exists():
+    sys.exit(0)
+
+for raw_line in env_path.read_text().splitlines():
+    line = raw_line.strip()
+    if not line or line.startswith("#") or "=" not in line:
+        continue
+    current_key, value = line.split("=", 1)
+    if current_key.strip() != key:
+        continue
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        value = value[1:-1]
+    sys.stdout.write(value)
+    break
+PY
+}
+
+read_env_or_default() {
+  local key="$1"
+  local fallback="$2"
+  local value
+  value="$(read_env_value "${key}")"
+
+  if [ -n "${value}" ]; then
+    printf '%s' "${value}"
+    return 0
+  fi
+
+  printf '%s' "${fallback}"
+}
+
+quote_for_shell() {
+  python3 -c 'import shlex,sys; print(shlex.quote(sys.argv[1]))' "$1"
+}
+
+write_ci_env() {
+  cat > "${ci_env_file}" <<EOF
+DATABASE_URL=$(quote_for_shell "$(read_env_value DATABASE_URL)")
+RABBITMQ_URL=$(quote_for_shell "$(read_env_value RABBITMQ_URL)")
+RABBITMQ_EXCHANGE=$(quote_for_shell "$(read_env_or_default RABBITMQ_EXCHANGE lce.events)")
+RABBITMQ_GENERATION_QUEUE=$(quote_for_shell "$(read_env_or_default RABBITMQ_GENERATION_QUEUE content.generation-requests)")
+OUTBOX_POLL_INTERVAL_MS=$(quote_for_shell "$(read_env_or_default OUTBOX_POLL_INTERVAL_MS 2000)")
+ORCHESTRATOR_PORT=$(quote_for_shell "$(read_env_or_default ORCHESTRATOR_PORT 3000)")
+REDIS_URL=$(quote_for_shell "$(read_env_or_default REDIS_URL redis://localhost:6379)")
+AI_ENGINE_LLM_MODE='stub'
+MARKET_SIGNAL_MODE='stub'
+CREWAI_RUNTIME_HOME=$(quote_for_shell "${repo_root}/.crewai-home")
+EOF
+}
+
+run_with_ci_env() {
+  (
+    set -a
+    source "${ci_env_file}"
+    set +a
+    "$@"
+  )
 }
 
 require_command pnpm
 require_command curl
 require_command docker
+require_command lsof
+require_command pgrep
 resolve_python_bin
+
+if ! mkdir "${lock_dir}" >/dev/null 2>&1; then
+  echo "Another ci-dev-setup run appears to be in progress. Remove ${lock_dir} if no run is active." >&2
+  exit 1
+fi
 
 trap cleanup EXIT INT TERM
 
 cd "${repo_root}"
 
+stop_existing_processes
+
 if [ ! -f "${repo_root}/.env" ]; then
   cp "${repo_root}/.env.example" "${repo_root}/.env"
 fi
 
-set -a
-source "${repo_root}/.env"
-set +a
+write_ci_env
 
 CI=true pnpm install
 
@@ -99,19 +198,21 @@ pnpm build
 pnpm typecheck
 "${venv_dir}/bin/python" -m compileall "${worker_dir}/src"
 
+docker compose -f "${docker_compose_file}" down -v >/dev/null 2>&1 || true
 docker compose -f "${docker_compose_file}" up -d
-pnpm db:migrate
+run_with_ci_env pnpm db:migrate
 
 (
   cd "${repo_root}/apps/orchestrator"
-  pnpm --filter @lce/orchestrator dev
+  DOTENV_CONFIG_PATH="${ci_env_file}" pnpm --filter @lce/orchestrator dev
 ) > "${repo_root}/.logs-ci-orchestrator.log" 2>&1 &
 ORCHESTRATOR_PID=$!
 
 (
   cd "${worker_dir}"
   source "${venv_dir}/bin/activate"
-  CREWAI_RUNTIME_HOME="${repo_root}/.crewai-home" PYTHONPATH="${worker_dir}/src" python -m ai_engine.main
+  unset OPENAI_API_KEY OPENAI_BASE_URL AI_ENGINE_LLM_API_KEY AI_ENGINE_LLM_API_BASE AI_ENGINE_LLM_MODEL
+  DOTENV_CONFIG_PATH="${ci_env_file}" PYTHONPATH="${worker_dir}/src" python -m ai_engine.main
 ) > "${repo_root}/.logs-ci-worker.log" 2>&1 &
 WORKER_PID=$!
 

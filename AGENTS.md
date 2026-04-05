@@ -7,11 +7,12 @@ Build the Lonnser Content Engine incrementally, phase by phase, following the ro
 Always read these first:
 - docs/00-project-overview.md
 - docs/01-global-architecture-rules.md
-- docs/20-phase-2-core-agentic-engine.md
-- docs/21-phase-2-acceptance-criteria.md
-- docs/22-phase-2-deliverables.md
-- docs/23-phase-2-worker-and-flow-rules.md
-- docs/24-phase-2-event-contracts.md
+- docs/30-phase-3-market-semantic-intelligence.md
+- docs/31-phase-3-acceptance-criteria.md
+- docs/32-phase-3-deliverables.md
+- docs/33-phase-3-market-rules.md
+- docs/34-phase-3-planning-rules.md
+- docs/35-phase-3-event-contracts.md
 - docs/90-future-phases-summary.md
 
 ## Permanent architecture rules
@@ -36,27 +37,23 @@ Always read these first:
 - If a requirement is ambiguous, choose the smallest implementation that satisfies the roadmap and architecture docs.
 
 ## Current delivery phase
-Phase 2 — Core Agentic Engine
+Phase 3 — Market & Semantic Intelligence
 
-## Phase 2 objective
-Deliver the first real AI execution loop:
-- worker engine
-- CrewAI flow with persistent typed state
-- Content Generation Agent
-- QA & Compliance Agent
-- iterative revision loop
-- approved content stored in repository
+## Phase 3 objective
+Deliver intelligent topic discovery and planning:
+- Market Awareness Crew
+- qualified topic scoring
+- sitemap ingestion
+- internal linking constraints
+- article blueprint / content plan generation
+- integration with the existing Phase 2 generation pipeline
 
 ## Out of scope unless explicitly requested
-- topic discovery / market awareness
-- DataForSEO
-- Reddit
-- Google Trends
-- sitemap ingestion
-- Structure & Style Agent
 - dashboard productization
-- CQRS UI views beyond what already exists
+- full CQRS UX work
+- SaaS quota/billing expansion beyond what already exists
 - SSE
 - CLI
 - MCP
 - publishing connectors
+- WordPress / Shopify / Notion / Medium integrations

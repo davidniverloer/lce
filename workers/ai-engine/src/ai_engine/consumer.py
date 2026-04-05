@@ -11,15 +11,15 @@ from sqlalchemy.orm import sessionmaker
 
 from .config import Settings
 from .handler import (
-    parse_generation_requested_event,
-    process_generation_requested_event,
+    parse_event,
+    process_event,
 )
 from .llm import LLMProvider
 
 LOGGER = logging.getLogger(__name__)
 
 
-class GenerationRequestedConsumer:
+class IntegrationEventConsumer:
     def __init__(
         self,
         settings: Settings,
@@ -56,6 +56,17 @@ class GenerationRequestedConsumer:
             exchange=self._settings.rabbitmq_exchange,
             routing_key="GenerationRequested",
         )
+        for routing_key in (
+            "TopicGenerationRequested",
+            "TopicQualified",
+            "SitemapUpdated",
+            "BlueprintValidated",
+        ):
+            channel.queue_bind(
+                queue=self._settings.generation_queue,
+                exchange=self._settings.rabbitmq_exchange,
+                routing_key=routing_key,
+            )
         channel.basic_qos(prefetch_count=1)
         channel.basic_consume(
             queue=self._settings.generation_queue,
@@ -83,23 +94,24 @@ class GenerationRequestedConsumer:
 
         try:
             raw_event = json.loads(body.decode("utf-8"))
-            event = parse_generation_requested_event(raw_event)
-            inserted = process_generation_requested_event(
+            event = parse_event(raw_event)
+            inserted = process_event(
                 session_factory=self._session_factory,
                 consumer_name=self._settings.consumer_name,
+                settings=self._settings,
                 event=event,
                 llm_provider=self._llm_provider,
             )
 
             if inserted:
-                LOGGER.info("Processed generation task %s", event.request.task_id)
+                LOGGER.info("Processed integration event %s", event.event_type)
             else:
                 LOGGER.info("Skipped duplicate event %s", event.event_id)
 
             channel.basic_ack(delivery_tag=method.delivery_tag)
         except ValueError:
-            LOGGER.exception("Discarding invalid generation event")
+            LOGGER.exception("Discarding invalid integration event")
             channel.basic_ack(delivery_tag=method.delivery_tag)
         except Exception:
-            LOGGER.exception("Failed to process generation event; requeueing")
+            LOGGER.exception("Failed to process integration event; requeueing")
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=True)

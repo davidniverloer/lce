@@ -9,7 +9,7 @@ from .runtime import prepare_crewai_runtime
 
 prepare_crewai_runtime()
 
-from .consumer import GenerationRequestedConsumer
+from .consumer import IntegrationEventConsumer
 
 
 def main() -> None:
@@ -19,9 +19,15 @@ def main() -> None:
     )
 
     settings = get_settings()
+    logging.getLogger(__name__).info(
+        "Starting ai-engine worker llm_mode=%s market_signal_mode=%s llm_model=%s",
+        settings.llm_mode,
+        settings.market_signal_mode,
+        settings.llm_model,
+    )
     session_factory = create_session_factory(settings.database_url)
     llm_provider = create_llm_provider(settings)
-    consumer = GenerationRequestedConsumer(settings, session_factory, llm_provider)
+    consumer = IntegrationEventConsumer(settings, session_factory, llm_provider)
     consumer.run_forever()
 
 
